@@ -1,0 +1,436 @@
+---
+title: "Jan 30 2018"
+author: "Felicia Zhang"
+date: '2018-01-30'
+output: html_document
+---
+
+Recreating graphs for baby lab meeting
+Making sure graphs are consistent with labels, colors
+```{r setup, include=FALSE}
+library(ggplot2) 
+library(zoo)
+library(reshape)
+library(plyr)
+library(scales) 
+library(data.table)
+library(signal)
+library(matrixStats)
+library(lme4)
+library(arm)
+library(RColorBrewer)
+library(lmerTest)
+
+#1. load data (master)
+OmixOrig = readRDS("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mix/Data/OMix.rds")
+OV1Orig = readRDS("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges/Data/OrangesV1.rds") 
+OV2Orig = readRDS("/Volumes/emberson/ResearchProjects/Pupillometry/OrangesV2/Data/OrangesV2.rds")
+
+#O_V1:
+#pupil corrected = pupil change from baseline
+#image = triplet position (1, 2 or 3)
+#newtime = time for each image in triplet (0-1250ms)
+#triplet = which triplet it is (1, 2, 3 or 4)
+#sub = faster way to index subjects
+#triplet_trialindex = trial number based on triplet (range 1 - 96)
+#timesseen = times seen the triplet (range 1- 24)
+#accuracy = coding if subject scored above or below the average accuracy (0 = below, 1 = above)
+#newtime2 = time for each triplet (0-3750ms)
+#newtime3 = recode time: 500ms, and then 750ms (0-1250ms)
+#timecode2 = recode time: 500ms, and then 750ms (0-1250ms)
+#timecode3 = time for each triplet (0-3750ms)
+
+#O_V2:
+#pupil corrected = baseline is each image
+#pupil corrected 2 = baseline first image of triplet
+#block = 1 = triplet, 2 = random
+#imageseq = first, second or third image in triplet
+#timesseen = times seen the triplet (range 1- 20)
+#TRIP_TRIAL_INDEX = correct triplet trial number
+#TIMECODE2 = correct 0 - 3754ms
+
+#OMix:
+#pupil corrected = baseline is each image
+#pupil corrected 2 = baseline first image of triplet
+#block = 1 = triplet, 2 = random
+#imageseq = first, second or third image in triplet
+#timesseen = times seen the triplet (range 1- 20)
+#TRIP_TRIAL_INDEX = correct triplet trial number
+#TIMECODE2 = correct 0 - 3754ms
+```
+
+Setting color palettes
+```{r}
+#colors
+color.t <- c("#FFCC00", "#ff9900","#FF6600")
+color.a <- c("#FFCC00", "#ff9900") 
+color.aa <- c("#bacfe3", "#2875be")  #blue
+color.ba <- c("#f15e6a", "#9c2b35")  #red
+color.trip <- c("#c9e29f","#58a329","#327508")  #triplet green
+color.ran <- c("#ddcfe8", "#7c60c3","#481f9d")  #random purple
+```
+
+Oranges V1 Graphs
+```{r}
+#timecourse
+a1 <- OV1Orig
+a=c(500, 1750, 3000)
+b=c(1250,2500)
+
+a2 <- ddply(a1,.(RECORDING_SESSION_LABEL,TIMECODE3),summarise,meanPUPIL=mean(newpupil,na.rm = TRUE)) #collapse across subjects
+a3 <- ddply(a2,.(TIMECODE3),summarise,meanPUPILSs=mean(meanPUPIL,na.rm = TRUE),sePUPIL=sd(meanPUPIL, na.rm = TRUE)/sqrt(length(meanPUPIL))) #collapse across subjects
+
+ggplot(a3,aes(x=TIMECODE3,y=meanPUPILSs))+geom_line()+
+  geom_ribbon(aes(ymin=meanPUPILSs-sePUPIL,ymax=meanPUPILSs+sePUPIL),alpha=0.4)+
+  scale_y_continuous(labels=percent,limits=c(-.1,.1),breaks=seq(-.1,.1,0.02))+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+ggtitle("Pupil change during triplet")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  geom_vline(xintercept = b, size = 1.5)+
+  geom_vline(xintercept = a, linetype = "longdash")+
+  scale_x_continuous(limits=c(0,3750),breaks=seq(0,3750,500), expand = c(0, 0))+
+  scale_fill_manual(values=color.t)+scale_colour_manual(values=color.t)
+
+#timecourse overlay
+b1 <- ddply(a1,.(RECORDING_SESSION_LABEL,image,TIMECODE2),summarise,meanPUPIL=mean(newpupil,na.rm = TRUE)) #collapse across subjects
+b2 <- ddply(b1,.(image,TIMECODE2),summarise,meanPUPILSs=mean(meanPUPIL,na.rm = TRUE),sePUPIL=sd(meanPUPIL, na.rm = TRUE)/sqrt(length(meanPUPIL))) #collapse across subjects
+
+ggplot(b2,aes(x=TIMECODE2,y=meanPUPILSs,color=factor(image),fill=factor(image)))+geom_line()+
+  geom_ribbon(aes(ymin=meanPUPILSs-sePUPIL,ymax=meanPUPILSs+sePUPIL),alpha=0.4)+
+  scale_y_continuous(labels=percent,limits=c(-.1,.1),breaks=seq(-.1,.1,0.02))+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  ggtitle("Pupil change during triplet")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  geom_vline(xintercept = 500, linetype = "longdash")+
+  scale_x_continuous(limits=c(0,1250), breaks=seq(0,1250,200), expand = c(0, 0))+
+  scale_fill_manual(values=color.t, name="Image",breaks=c("1", "2","3"),labels=c("1", "2","3"))+
+  guides(color=FALSE)+
+  scale_colour_manual(values=color.t)+
+  theme(legend.position = "bottom")
+
+#triplet timecourse, for accuracy
+c1 <- ddply(a1,.(RECORDING_SESSION_LABEL,accuracy,TIMECODE3),summarise,meanPUPIL=mean(newpupil,na.rm = TRUE)) #collapse across subjects
+c2 <- ddply(c1,.(accuracy,TIMECODE3),summarise,meanPUPILSs=mean(meanPUPIL,na.rm = TRUE),sePUPIL=sd(meanPUPIL, na.rm = TRUE)/sqrt(length(meanPUPIL))) #collapse across subjects
+
+ggplot(c2,aes(x=TIMECODE3,y=meanPUPILSs,color=factor(accuracy),fill=factor(accuracy)))+
+  geom_line()+
+  geom_ribbon(aes(ymin=meanPUPILSs-sePUPIL,ymax=meanPUPILSs+sePUPIL),alpha=0.4)+
+  scale_y_continuous(labels=percent,limits=c(-.1,.1),breaks=seq(-.1,.1,0.02))+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+ggtitle("Pupil change during triplet")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  geom_vline(xintercept = b, size = 1.5)+
+  geom_vline(xintercept = a, linetype = "longdash")+
+  scale_x_continuous(limits=c(0,3750),breaks=seq(0,3750,500), expand = c(0, 0))+
+  scale_fill_brewer(palette="Set1",name="Accuracy",breaks=c("0", "1"),labels=c("below average", "above average"))+guides(color=FALSE)+
+  scale_colour_brewer(palette="Set1")+
+  theme(legend.position = "bottom")
+
+```
+
+Oranges V2 Graphs
+```{r}
+f1 <- OV2Orig
+
+#ACCURACY HISTOGRAM
+z1 <- ddply(f1,.(subID),summarise,accuracy=mean(subaccuracy,na.rm = TRUE)) 
+dodge <- position_dodge(width=0.9)
+mean(z1$accuracy)
+length(which(z1$accuracy > 0.5))
+
+ggplot(z1,aes(x=accuracy))+
+  geom_histogram()+
+  labs(y = "Number of subjects",x="accuracy")+
+  theme(plot.title = element_text(face="bold", size=16, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=16),axis.title.x=element_blank())+ 
+  theme(axis.text.x  = element_text(size=16),axis.text.y  = element_text(size=16))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+
+  scale_y_continuous(limits=c(0,10),breaks=seq(0,10,1))+
+  scale_x_continuous(labels=percent,limits=c(0,1),breaks=seq(0,1,.1))
+
+#TIMECOURSE PLOTS
+g1 <- ddply(f1,.(RECORDING_SESSION_LABEL,TIMECODE,imagetype),summarise,meanPUPIL=mean(PUPIL_CORRECTED_3,na.rm = TRUE)) #collapse across trials
+g2 <- ddply(g1,.(imagetype,TIMECODE),summarise,meanPUPILSs=mean(meanPUPIL,na.rm = TRUE),sePUPIL=sd(meanPUPIL, na.rm = TRUE)/sqrt(length(meanPUPIL))) #collapse across subjects
+
+#overlay
+ggplot(g2,aes(x=TIMECODE,y=meanPUPILSs,color=factor(imagetype),fill=factor(imagetype)))+
+  geom_line()+
+  scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+  geom_ribbon(aes(ymin=meanPUPILSs-sePUPIL,ymax=meanPUPILSs+sePUPIL),alpha=0.3)+
+  scale_y_continuous(labels=percent,limits=c(-.05,.05),breaks=seq(-.05,.05,0.01))+
+  guides(color=FALSE)+theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  ggtitle("Timecourse for trial type")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  scale_fill_manual(values=color.t,name="Image",breaks=c("0", "1","2"),labels=c("0", "1","2"))+
+  geom_vline(xintercept = 500,linetype = "longdash")+
+  scale_color_manual(values=color.t)+
+  theme(legend.position = "bottom")
+
+#overlay above avg + below avg
+h1 <- subset(f1, accuracy==1)
+h2 <- ddply(h1,.(RECORDING_SESSION_LABEL,TIMECODE,imagetype),summarise,meanPUPIL=mean(PUPIL_CORRECTED_3,na.rm = TRUE)) #collapse across trials
+h3 <- ddply(h2,.(imagetype,TIMECODE),summarise,meanPUPILSs=mean(meanPUPIL,na.rm = TRUE),sePUPIL=sd(meanPUPIL, na.rm = TRUE)/sqrt(length(meanPUPIL))) #collapse across subjects
+
+h5 <- subset(f1, accuracy==0)
+h6 <- ddply(h5,.(RECORDING_SESSION_LABEL,TIMECODE,imagetype),summarise,meanPUPIL=mean(PUPIL_CORRECTED_3,na.rm = TRUE)) #collapse across trials
+h7 <- ddply(h6,.(imagetype,TIMECODE),summarise,meanPUPILSs=mean(meanPUPIL,na.rm = TRUE),sePUPIL=sd(meanPUPIL, na.rm = TRUE)/sqrt(length(meanPUPIL))) #collapse across subjects
+
+#num of subjects in above acc: 
+length(unique(h1$RECORDING_SESSION_LABEL))
+length(unique(h5$RECORDING_SESSION_LABEL))
+
+h3$accuracy <- 1
+h7$accuracy <- 0
+hfinal <- rbind(h3,h7)
+trialtype <- c(`1` = "Predicting",`2` = "Predicted")
+
+ggplot(hfinal,aes(x=TIMECODE,y=meanPUPILSs,color=factor(accuracy),fill=factor(accuracy)))+
+  geom_line()+geom_ribbon(aes(ymin=meanPUPILSs-sePUPIL,ymax=meanPUPILSs+sePUPIL),alpha=0.4)+
+  scale_y_continuous(labels=percent,limits=c(-.05,.05),breaks=seq(-.05,0.05,0.01))+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  ggtitle("Timecourse for trial type")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  geom_vline(xintercept = 500, linetype = "longdash")+
+  scale_x_continuous(limits=c(0,1300),breaks=seq(0,1300,200), expand = c(0, 0))+
+  facet_wrap(~imagetype,labeller = as_labeller(trialtype))+
+  theme(strip.text = element_text(size=16))+
+  scale_fill_brewer(palette="Set1",name="Accuracy", breaks=c("0", "1"),labels=c("below average", "above average"))+
+  guides(color=FALSE)+
+  scale_colour_brewer(palette="Set1")+
+  theme(legend.position = "bottom")
+
+#overlay above avg + trial type
+ggplot(h3,aes(x=TIMECODE,y=meanPUPILSs,color=factor(imagetype),fill=factor(imagetype)))+
+  geom_line()+
+  scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+  geom_ribbon(aes(ymin=meanPUPILSs-sePUPIL,ymax=meanPUPILSs+sePUPIL),alpha=0.3)+
+  scale_y_continuous(labels=percent,limits=c(-.05,.05),breaks=seq(-.05,0.05,0.01))+
+  guides(color=FALSE)+theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  ggtitle("Timecourse for trial type (above average)")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  scale_fill_manual(values=color.aa,name="Image",breaks=c("0","1","2"),labels=c("0", "1","2"))+
+  geom_vline(xintercept = 500,linetype = "longdash")+
+  scale_color_manual(values=color.aa)+
+  theme(legend.position = "bottom")
+
+#overlay below avg + trial type
+ggplot(h7,aes(x=TIMECODE,y=meanPUPILSs,color=factor(imagetype),fill=factor(imagetype)))+
+  geom_line()+
+  scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+  geom_ribbon(aes(ymin=meanPUPILSs-sePUPIL,ymax=meanPUPILSs+sePUPIL),alpha=0.3)+
+  scale_y_continuous(labels=percent,limits=c(-.05,.05),breaks=seq(-.05,0.05,0.01))+
+  guides(color=FALSE)+theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  ggtitle("Timecourse for trial type (below average)")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  scale_fill_manual(values=color.ba,name="Image",breaks=c("0", "1","2"),labels=c("0", "1","2"))+
+  geom_vline(xintercept = 500,linetype = "longdash")+
+  scale_color_manual(values=color.ba)+
+  theme(legend.position = "bottom")
+
+```
+
+Oranges V2 Graphs, RELABEL ACCURACY ACCORDING TO 50%
+```{r}
+f1 <- OV2Orig
+f1$accuracyV2 <- 0
+f1$accuracyV2[f1$subaccuracy > 0.5] <- 1
+
+#overlay above avg + below avg
+h1 <- subset(f1, accuracyV2==1)
+h2 <- ddply(h1,.(RECORDING_SESSION_LABEL,TIMECODE,imagetype),summarise,meanPUPIL=mean(PUPIL_CORRECTED_3,na.rm = TRUE)) #collapse across trials
+h3 <- ddply(h2,.(imagetype,TIMECODE),summarise,meanPUPILSs=mean(meanPUPIL,na.rm = TRUE),sePUPIL=sd(meanPUPIL, na.rm = TRUE)/sqrt(length(meanPUPIL))) #collapse across subjects
+
+h5 <- subset(f1, accuracyV2==0)
+h6 <- ddply(h5,.(RECORDING_SESSION_LABEL,TIMECODE,imagetype),summarise,meanPUPIL=mean(PUPIL_CORRECTED_3,na.rm = TRUE)) #collapse across trials
+h7 <- ddply(h6,.(imagetype,TIMECODE),summarise,meanPUPILSs=mean(meanPUPIL,na.rm = TRUE),sePUPIL=sd(meanPUPIL, na.rm = TRUE)/sqrt(length(meanPUPIL))) #collapse across subjects
+
+#num of subjects in above acc: 
+length(unique(h1$RECORDING_SESSION_LABEL))
+length(unique(h5$RECORDING_SESSION_LABEL))
+
+h3$accuracy <- 1
+h7$accuracy <- 0
+hfinal <- rbind(h3,h7)
+trialtype <- c(`1` = "Predicting",`2` = "Predicted")
+
+ggplot(hfinal,aes(x=TIMECODE,y=meanPUPILSs,color=factor(accuracy),fill=factor(accuracy)))+
+  geom_line()+geom_ribbon(aes(ymin=meanPUPILSs-sePUPIL,ymax=meanPUPILSs+sePUPIL),alpha=0.4)+
+  scale_y_continuous(labels=percent,limits=c(-.05,.05),breaks=seq(-.05,0.05,0.01))+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  ggtitle("Timecourse for trial type")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  geom_vline(xintercept = 500, linetype = "longdash")+
+  scale_x_continuous(limits=c(0,1300),breaks=seq(0,1300,200), expand = c(0, 0))+
+  facet_wrap(~imagetype,labeller = as_labeller(trialtype))+
+  theme(strip.text = element_text(size=16))+
+  scale_fill_brewer(palette="Set1",name="Accuracy", breaks=c("0", "1"),labels=c("below average", "above average"))+
+  guides(color=FALSE)+
+  scale_colour_brewer(palette="Set1")+
+  theme(legend.position = "bottom")
+
+#overlay above avg + trial type
+ggplot(h3,aes(x=TIMECODE,y=meanPUPILSs,color=factor(imagetype),fill=factor(imagetype)))+
+  geom_line()+
+  scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+  geom_ribbon(aes(ymin=meanPUPILSs-sePUPIL,ymax=meanPUPILSs+sePUPIL),alpha=0.3)+
+  scale_y_continuous(labels=percent,limits=c(-.05,.05),breaks=seq(-.05,0.05,0.01))+
+  guides(color=FALSE)+theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  ggtitle("Timecourse for trial type (above average)")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  scale_fill_manual(values=color.aa,name="Image",breaks=c("0","1","2"),labels=c("0", "1","2"))+
+  geom_vline(xintercept = 500,linetype = "longdash")+
+  scale_color_manual(values=color.aa)+
+  theme(legend.position = "bottom")
+
+#overlay below avg + trial type
+ggplot(h7,aes(x=TIMECODE,y=meanPUPILSs,color=factor(imagetype),fill=factor(imagetype)))+
+  geom_line()+
+  scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+  geom_ribbon(aes(ymin=meanPUPILSs-sePUPIL,ymax=meanPUPILSs+sePUPIL),alpha=0.3)+
+  scale_y_continuous(labels=percent,limits=c(-.05,.05),breaks=seq(-.05,0.05,0.01))+
+  guides(color=FALSE)+theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  ggtitle("Timecourse for trial type (below average)")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  scale_fill_manual(values=color.ba,name="Image",breaks=c("0", "1","2"),labels=c("0", "1","2"))+
+  geom_vline(xintercept = 500,linetype = "longdash")+
+  scale_color_manual(values=color.ba)+
+  theme(legend.position = "bottom")
+
+```
+Oranges Mix Graphs
+```{r}
+#only keep center looks
+orig2 <- OmixOrig
+a <- which(orig2$RIGHT_GAZE_X < 440)
+orig2 <- orig2[-c(a), ]
+a <- which(orig2$RIGHT_GAZE_Y < 312)
+orig2 <- orig2[-c(a), ]
+a <- which(orig2$RIGHT_GAZE_X > 840)
+orig2 <- orig2[-c(a), ]
+a <- which(orig2$RIGHT_GAZE_Y > 712)
+orig2 <- orig2[-c(a), ]
+
+block1 <- subset(orig2, TRIAL_INDEX < 241)
+block2 <- subset(orig2, TRIAL_INDEX > 240)
+
+###Timecourse
+#block 1 overlay
+d1 <- ddply(block1,.(subID,TIMECODE,imageseq),summarise,meanpupil=mean(PUPIL_CORRECTED_2,na.rm = TRUE))
+d2 <- ddply(d1,.(TIMECODE,imageseq),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+ggplot(d2,aes(x=TIMECODE,y=meanPUPIL,color=factor(imageseq),fill=factor(imageseq)))+
+  geom_line()+
+  scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+  geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.3)+
+  scale_y_continuous(labels=percent,limits=c(-.1,.1),breaks=seq(-.1,.1,.02))+
+  guides(color=FALSE)+theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  ggtitle("Timecourse Block 1 (Triplet)")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  scale_fill_manual(name="Image",values=color.trip)+
+  geom_vline(xintercept = 500,linetype = "longdash")+
+  scale_color_manual(values=color.trip)+
+  theme(legend.position = "bottom")
+
+#block 2 overlay
+goo <- ddply(block2,.(subID,TIMECODE,imageseq),summarise,meanpupil=mean(PUPIL_CORRECTED_2,na.rm = TRUE))
+goo2 <- ddply(goo,.(TIMECODE,imageseq),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+ggplot(goo2,aes(x=TIMECODE,y=meanPUPIL,color=factor(imageseq),fill=factor(imageseq)))+
+  geom_line()+
+  scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+  geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.3)+
+  scale_y_continuous(labels=percent,limits=c(-.1,.1),breaks=seq(-.1,.1,.02))+
+  guides(color=FALSE)+theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  ggtitle("Timecourse Block 2 (Random)")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  scale_fill_manual(name="Image",values=color.ran)+
+  geom_vline(xintercept = 500,linetype = "longdash")+
+  theme(legend.position = "bottom")+
+  scale_colour_manual(values=color.ran)
+
+#timecourse block 1 + block 2 overlay
+
+coo1 <- ddply(block1,.(subID,TIMECODE2),summarise,meanpupil=mean(PUPIL_CORRECTED_2,na.rm = TRUE))
+coo2 <- ddply(block2,.(subID,TIMECODE2),summarise,meanpupil=mean(PUPIL_CORRECTED_2,na.rm = TRUE))
+coo1$block <- 1
+coo2$block <- 2
+coo3 <- ddply(coo1,.(TIMECODE2,block),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+coo4 <- ddply(coo2,.(TIMECODE2,block),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+a = c(500,1750,3000)
+aa = c(1250,2500)
+
+coo5 <- rbind(coo3,coo4)
+
+ggplot(coo5,aes(x=TIMECODE2,y=meanPUPIL,color=factor(block),fill=factor(block)))+geom_line()+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+ggtitle("Timecourse")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.4)+
+  scale_x_continuous(limits=c(0,3754),breaks=seq(0,3754,500), expand = c(0, 0))+
+  theme(strip.text = element_text(size=16))+
+  scale_y_continuous(labels=percent,limits=c(-.1,.1),breaks=seq(-.1,.1,.02))+
+  guides(color=FALSE)+
+  scale_fill_brewer(palette="Accent",name="Block",breaks=c("1","2"),labels=c("Triplet", "Random"))+
+  scale_color_brewer(palette="Accent")+
+  theme(legend.position = "bottom")+
+  geom_vline(xintercept = a, linetype = "longdash")+
+  geom_vline(xintercept = aa, size =1)
+```
