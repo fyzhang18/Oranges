@@ -1,0 +1,570 @@
+---
+title: "Cog Lunch Graphs V2"
+author: "Felicia Zhang"
+date: '2017-02-27'
+output: html_document
+---
+
+Now we are removing accuracy since it doesn't come out in the model
+```{r setup, include=FALSE}
+
+library(ggplot2) 
+library(zoo)
+library(reshape)
+library(plyr)
+library(scales) 
+library(data.table)
+library(signal)
+library(matrixStats)
+library(lme4)
+library(arm)
+library(RColorBrewer)
+library(lmerTest)
+
+#famphase1 = raw fam phase, only been preprocessed nothing else done
+#famphase2 = including newtime and newtime2
+#famphase3 = same as famphase2 + new timecode
+
+#famphase4 = raw fam phase, actually recoded trials based on original data so that new timecourse is much smoother
+#famphase5 = includes newpupil where pupil size for triplet is calculated for baseline of first image
+
+#1. load data (master)
+famtrials <- read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges/Data/Oranges_famphase5.csv")   
+famtrials$X.1 <- NULL
+famtrials$HTARGET_DISTANCE <- NULL
+famtrials$HTARGET_X <- NULL
+famtrials$HTARGET_Y <- NULL
+famtrials$LEFT_GAZE_X <- NULL
+famtrials$LEFT_GAZE_Y <- NULL
+famtrials$LEFT_PUPIL_SIZE <- NULL
+famtrials$TRIAL_LABEL <- NULL
+famtrials$LEFT_IN_BLINK <- NULL
+names(famtrials)[11]<-"sub"
+
+poo <- famtrials
+#pupil corrected = pupil change from baseline
+#image = triplet position (1, 2 or 3)
+#newtime = time for each image in triplet (0-1250ms)
+#triplet = which triplet it is (1, 2, 3 or 4)
+#sub = faster way to index subjects
+#triplet_trialindex = trial number based on triplet (range 1 - 96)
+#timesseen = times seen the triplet (range 1- 24)
+#accuracy = coding if subject scored above or below the average accuracy (0 = below, 1 = above)
+#newtime2 = time for each triplet (0-3750ms)
+#newtime3 = recode time: 500ms, and then 750ms (0-1250ms)
+#timecode2 = recode time: 500ms, and then 750ms (0-1250ms)
+#timecode3 = time for each triplet (0-3750ms)
+
+a <- c(1250,2500,3750) #image onset
+b <- c(500,1750,3000)
+
+#colors
+color.v1 <- c("#ffcc66", "#ff9900","#cc3300") #triplet position
+#color.v2 <- c("#ccffff", "#99ccff","#336699") #good
+color.v3 <- c("#ff9900", "#99ccff") #group
+```
+
+Modelling: pupil size based on image position, random effect for subjects
+can also add in: trial number, triplet times seen, 
+```{r}
+#add in continuous accuracy variable
+famtrials2 <- famtrials
+acc <- read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges/Data/Oranges_accuracy.csv")
+acc<-acc[!(acc$subject==2 |acc$subject==11|acc$subject==33 |acc$subject==38),]
+famtrials2$accuracy2 <- 0
+sub <- unique(famtrials2$sub)
+
+for (i in 1:length(sub)) {
+  famtrials2$accuracy2[famtrials2$sub==sub[i]] <- acc$accuracy[i]
+}
+
+#500ms
+famtrials3 <- subset(famtrials2, TIMECODE2 < 502)
+
+#participant (1-53), triplet presentation (1-24), image position (1-3), overall position in the stream (1-288), accuracy
+model500 <- ddply(famtrials3,.(sub,timesseen,image,triplet_trialindex,accuracy,accuracy2),summarise,meanpupil=mean(newpupil,na.rm = TRUE)) 
+
+#create nested models to help you pick 
+fit1 <- lmer(meanpupil ~ image + (1|sub), data = model500)
+
+#fit2 <- lmer(meanpupil ~ image + factor(accuracy) + (1 |sub), data = model500) #can also include accuracy as continuous
+fit2 <- lmer(meanpupil ~ image + accuracy2 + (1|sub), data = model500) 
+
+fit3 <- lmer(meanpupil ~ image + accuracy2 + timesseen + (1|sub), data = model500) #(1|sub = intercept)
+
+
+anova(fit1,fit2,fit3)
+#anova measures difference for residual sum of squares (RSS) is a statistical technique used to measure the amount of variance in a data set that is not explained by the regression model
+#including timesseen and accuracy helped a lot p = 0.026
+
+summary(fit3) #image + accuracy + timesseen + (1 | sub)
+#within a trial, pupil size increases for image seen p = 3.91e-06***
+#throughout the experiment, size increases p = 0.0263*
+#no diff in accuracy :( p = 0.2835
+
+#add interaction
+fit4 <- lmer(meanpupil ~ image * accuracy2 * timesseen + (1|sub), data = model500) #(1|sub = intercept)
+summary(fit4)
+#nothing
+
+#750ms
+famtrials3 <- subset(famtrials2, TIMECODE2 > 500)
+
+#participant (1-53), triplet presentation (1-24), image position (1-3), overall position in the stream (1-288), accuracy
+model750 <- ddply(famtrials3,.(sub,timesseen,image,triplet_trialindex,accuracy,accuracy2),summarise,meanpupil=mean(newpupil,na.rm = TRUE)) 
+
+#create nested models to help you pick 
+fit11 <- lmer(meanpupil ~ image + (1|sub), data = model750)
+
+#fit2 <- lmer(meanpupil ~ image + factor(accuracy) + (1 |sub), data = model500) #can also include accuracy as continuous
+fit21 <- lmer(meanpupil ~ image + accuracy2 + (1|sub), data = model750) 
+
+fit31 <- lmer(meanpupil ~ image + accuracy2 + timesseen + (1|sub), data = model750) #(1|sub = intercept)
+
+anova(fit11,fit21,fit31)
+#comparing it to fit1
+#anova measures difference for residual sum of squares (RSS) is a statistical technique used to measure the amount of variance in a data set that is not explained by the regression model
+#including timesseen and accuracy helped a lot p = 1.9e-07***
+
+summary(fit31) #image + accuracy + timesseen + (1 | sub)
+#within a trial, no pupil size increases for image seen
+#throughout the experiment, size increases timesseen p = 1.93e-07
+#no diff in accuracy :(
+
+#add interaction
+fit41 <- lmer(meanpupil ~ image * accuracy2 * timesseen + (1|sub), data = model750) #(1|sub = intercept)
+summary(fit41)
+#nothing
+
+```
+
+
+run the model again with just second and third images? 
+raw pupil size
+```{r}
+#add in continuous accuracy variable
+famtrials2 <- famtrials
+acc <- read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges/Data/Oranges_accuracy.csv")
+acc<-acc[!(acc$subject==2 |acc$subject==11|acc$subject==33 |acc$subject==38),]
+famtrials2$accuracy2 <- 0
+sub <- unique(famtrials2$sub)
+
+for (i in 1:length(sub)) {
+  famtrials2$accuracy2[famtrials2$sub==sub[i]] <- acc$accuracy[i]
+}
+
+#500ms
+famtrials3 <- subset(famtrials2, TIMECODE2 < 502)
+#only looking at second and third images
+
+#participant (1-53), triplet presentation (1-24), image position (1-3), overall position in the stream (1-288), accuracy
+model500 <- ddply(famtrials3,.(sub,timesseen,image,triplet_trialindex,accuracy2),summarise,meanpupil=mean(newpupil,na.rm = TRUE)) 
+model500 <- subset(model500, image > 1)
+
+#create nested models to help you pick 
+fit1 <- lmer(meanpupil ~ image + (1|sub), data = model500)
+
+#fit2 <- lmer(meanpupil ~ image + factor(accuracy) + (1 |sub), data = model500) #can also include accuracy as continuous
+fit2 <- lmer(meanpupil ~ image + accuracy2 + (1|sub), data = model500) 
+
+fit3 <- lmer(meanpupil ~ image + accuracy2 + timesseen + (1|sub), data = model500) #(1|sub = intercept)
+
+
+anova(fit1,fit2,fit3)
+#anova measures difference for residual sum of squares (RSS) is a statistical technique used to measure the amount of variance in a data set that is not explained by the regression model
+#including timesseen and accuracy helped a lot p = 0.026*
+
+summary(fit3) #image + accuracy + timesseen + (1 | sub)
+#within a trial, pupil size increases for image seen p = 0.0194*
+#throughout the experiment, size increases times seen p = 0.0261*
+#no diff in accuracy :( p = 0.2851
+
+#add interaction
+fit4 <- lmer(meanpupil ~ image * accuracy2 * timesseen + (1|sub), data = model500) #(1|sub = intercept)
+summary(fit4)
+#no interaction
+
+#750ms
+famtrials3 <- subset(famtrials2, TIMECODE2 > 500)
+
+#participant (1-53), triplet presentation (1-24), image position (1-3), overall position in the stream (1-288), accuracy
+model750 <- ddply(famtrials3,.(sub,timesseen,image,triplet_trialindex,accuracy,accuracy2),summarise,meanpupil=mean(newpupil,na.rm = TRUE)) 
+model750 <- subset(model750, image > 1)
+
+#create nested models to help you pick 
+fit11 <- lmer(meanpupil ~ image + (1|sub), data = model750)
+
+#fit2 <- lmer(meanpupil ~ image + factor(accuracy) + (1 |sub), data = model500) #can also include accuracy as continuous
+fit21 <- lmer(meanpupil ~ image + accuracy2 + (1|sub), data = model750) 
+
+fit31 <- lmer(meanpupil ~ image + accuracy2 + timesseen + (1|sub), data = model750) #(1|sub = intercept)
+
+anova(fit11,fit21,fit31)
+#comparing it to fit1
+#anova measures difference for residual sum of squares (RSS) is a statistical technique used to measure the amount of variance in a data set that is not explained by the regression model
+#including timesseen and accuracy helped a lot p = 5.185e-06***
+
+summary(fit31) #image + accuracy + timesseen + (1 | sub)
+#within a trial, no pupil size increases for image seen p = 0.183
+#throughout the experiment, size increases timesseen p = 5.2e-06
+#no diff in accuracy :( p = 0.693
+
+#add interaction
+fit41 <- lmer(meanpupil ~ image * accuracy2 * timesseen + (1|sub), data = model750) #(1|sub = intercept)
+summary(fit41)
+#nothing
+
+
+#SUMMARY: when removing image 1, all the effects stay the same except for the interaction
+```
+
+
+Triplet timecourse graph of triplet so that all the pupil_corrected are relative to the first baseline
+removing first triplet since we're missing it
+```{r}
+# poo$newpupil <- 0
+# 
+# poo <- subset(poo, triplet_trialindex > 1) #removing first triplet Ss see since it's missing the first image
+# trials <- unique(poo$triplet_trialindex)
+# subs <- unique(poo$sub)
+# 
+# for (j in 1:length(subs)) {
+#   print(j)
+# for (i in 1:length(trials)) { #for each trial
+#   q <- min(which(poo$triplet_trialindex == trials[i] & poo$sub == subs[j]))
+#   baseline <- poo$rollmean100ms[(q):(q+250)] #gets 500 ms of start of trial as baseline
+#   baselineavg <- mean(baseline)
+#   poo$newpupil[poo$triplet_trialindex == trials[i] & poo$sub == subs[j]] <- (poo$rollmean100ms[poo$triplet_trialindex == trials[i] & poo$sub == subs[j]] - baselineavg) / baselineavg
+#   print(i)
+# }}
+
+fam3 <- ddply(poo,.(RECORDING_SESSION_LABEL,TIMECODE3),summarise,meanPUPIL=mean(newpupil,na.rm = TRUE)) #collapse across subjects
+goo <- ddply(fam3,.(TIMECODE3),summarise,meanPUPILSs=mean(meanPUPIL,na.rm = TRUE),sePUPIL=sd(meanPUPIL, na.rm = TRUE)/sqrt(length(meanPUPIL))) #collapse across subjects
+
+  ggplot(goo,aes(x=TIMECODE3,y=meanPUPILSs))+geom_line(colour="#ff9900")+
+    geom_ribbon(aes(ymin=meanPUPILSs-sePUPIL,ymax=meanPUPILSs+sePUPIL),alpha=0.4, fill="#ff9900")+
+     scale_y_continuous(labels=percent,limits=c(-.1,.1),breaks=seq(-.1,.1,0.05))+theme_bw()+theme(panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+ggtitle("Pupil change during triplet")+
+    labs(x = "Time (ms)", y = "Change from baseline")+
+    theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+    theme(axis.title = element_text(face="bold", size=20))+ 
+    theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+    theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+geom_vline(xintercept = a, size = 1.5)+geom_vline(xintercept = b, linetype = "longdash")+scale_x_continuous(limits=c(0,3750),breaks=seq(0,3750,500), expand = c(0, 0))
+
+```
+
+overlay graph V2
+```{r}
+#overlay triplet image 1,2 3
+fam3 <- ddply(poo,.(sub,TIMECODE3),summarise,meanPUPIL=mean(newpupil,na.rm = TRUE)) #
+gooD <- ddply(fam3,.(TIMECODE3),summarise,meanPUPILSs=mean(meanPUPIL,na.rm = TRUE),sePUPIL=sd(meanPUPIL, na.rm = TRUE)/sqrt(length(meanPUPIL)))
+
+img1 <- subset(gooD, TIMECODE3 < 1251)
+img1$image <- 1
+img2 <- subset(gooD, TIMECODE3 < 2503 & TIMECODE3 > 1250 )
+img2$TIMECODE3 <- seq(0, 1250, by = 2)
+img2$image <- 2
+img3 <- subset(gooD, TIMECODE3 > 2502 )
+img3$TIMECODE3 <- seq(0, 1250, by = 2)
+img3$image <- 3
+
+goo2 <- rbind(img1,img2,img3)  
+#plot
+
+  ggplot(goo2,aes(x=TIMECODE3,y=meanPUPILSs,color=factor(image),fill=factor(image)))+
+    geom_line()+
+    scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+    scale_colour_manual(values=color.v1)+
+    geom_ribbon(aes(ymin=meanPUPILSs-sePUPIL,ymax=meanPUPILSs+sePUPIL),alpha=0.3)+
+    scale_y_continuous(labels=percent,limits=c(-.1,.1),breaks=seq(-.1,.1,.05))+
+    guides(color=FALSE)+
+    theme_bw()+theme(panel.grid.major = element_blank(),
+panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+ggtitle("Pupil change during triplet")+
+    labs(x = "Time (ms)", y = "Change from baseline")+
+    theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+    theme(axis.title = element_text(face="bold", size=20))+ 
+    theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+    theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+    scale_fill_manual(values=color.v1,name="Image in triplet",breaks=c("1", "2","3"),labels=c("1", "2","3"))+geom_vline(xintercept = 500)
+
+```
+
+times seen triplet for 500ms for new timecode, baselining everything to the first image in triplet
+```{r}
+famtrials2 <- subset(poo, TIMECODE2 < 502) #only looking at first 500ms, which is the blank screen
+
+#we have 4 triplets, see each triplet max of 24 times, for a total of 96 triplets/288 imgs
+#label each trial with which triplet they saw
+#label each trial with the number of times they saw that triplet
+hoo <- read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges/Data/blah_keep.csv")
+
+#remove the 3 subs:
+hoo<-hoo[!(hoo$id==2 |hoo$id==11 |hoo$id==38),]
+hoo <- subset(hoo, TRIAL_INDEX > 1)
+#average pupil size 
+hoo2 <- ddply(famtrials2,.(sub,triplet_trialindex,image),summarise,meanpupil=mean(newpupil,na.rm = TRUE))
+  
+hoofinal <- cbind(hoo2,hoo)
+hoofinal$sub <- NULL
+hoofinal$TRIAL_INDEX <- NULL
+hoofinal[,8] <- NULL
+
+coo6 <- ddply(hoofinal,.(id,image,timesseen),summarise,meanpupil2=mean(meanpupil,na.rm = TRUE)) #collapse triplet id
+coo7 <- ddply(coo6,.(image,timesseen),summarise,meanpupilSs=mean(meanpupil2,na.rm = TRUE),sepupil=sd(meanpupil2, na.rm = TRUE)/sqrt(length(meanpupil2))) #collapse across subjects
+
+#plot
+coo8 <- coo7
+
+#cor.test
+xyz1 <-cor.test(coo8$timesseen[coo8$image==1], coo8$meanpupilSs[coo8$image==1], alternative = "two.sided", method = "pearson")
+xyz1
+xyz2 <-cor.test(coo8$timesseen[coo8$image==2], coo8$meanpupilSs[coo8$image==2], alternative = "two.sided", method = "pearson")
+xyz2
+xyz3 <-cor.test(coo8$timesseen[coo8$image==3], coo8$meanpupilSs[coo8$image==3], alternative = "two.sided", method = "pearson")
+xyz3
+
+yoo3 <- data.frame(image= numeric(3), comments= numeric(3))
+yoo3$image <- 1:3
+yoo3$comments[1] <- "cor = -0.09, p = 0.6798"
+yoo3$comments[2] <- "cor = 0.21, p = 0.3182"
+yoo3$comments[3] <- "cor = 0.42, p = 0.04243"
+
+famtrialsnames <- c(
+                    `1` = "First in triplet",
+                    `2` = "Second in triplet",
+                    `3` = "Third in triplet"
+                    )
+
+ggplot(coo8,aes(x=timesseen,y=meanpupilSs,color=factor(image),fill=factor(image)))+geom_point()+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  scale_colour_manual(values=color.v1)+scale_fill_manual(values=color.v1)+
+  ggtitle("Pupil change during anticipatory period (500ms) throughout experiment")+
+  geom_text(data=yoo3, aes(x=12, y=0.09, label=comments), colour="black", size = 7)+
+  labs(x = "Times seen triplet", y = "Change from baseline")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+xlim(0, 24)+guides(color=FALSE)+facet_wrap(~image,labeller = as_labeller(famtrialsnames))+theme(strip.text = element_text(size=16))+stat_smooth(method=lm)+theme(legend.position="none")+scale_y_continuous(labels=percent,limits=c(-.05,.1),breaks=seq(-.05,.1,0.02))
+
+```
+
+times seen triplet for 750ms for new timecode, baselining everything to the first image in triplet
+```{r}
+famtrials2 <- subset(poo, TIMECODE2 > 500) #only looking at last 750, which is the pic
+
+#we have 4 triplets, see each triplet max of 24 times, for a total of 96 triplets/288 imgs
+#label each trial with which triplet they saw
+#label each trial with the number of times they saw that triplet
+hoo <- read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges/Data/blah_keep.csv")
+
+#remove the 3 subs:
+hoo<-hoo[!(hoo$id==2 |hoo$id==11 |hoo$id==38),]
+hoo <- subset(hoo, TRIAL_INDEX > 1)
+#average pupil size during 750ms
+hoo2 <- ddply(famtrials2,.(sub,triplet_trialindex,image),summarise,meanpupil=mean(newpupil,na.rm = TRUE))
+  
+hoofinal <- cbind(hoo2,hoo)
+hoofinal$sub <- NULL
+hoofinal$TRIAL_INDEX <- NULL
+hoofinal[,8] <- NULL
+
+coo6 <- ddply(hoofinal,.(id,image,timesseen),summarise,meanpupil2=mean(meanpupil,na.rm = TRUE)) #collapse triplet id
+coo7 <- ddply(coo6,.(image,timesseen),summarise,meanpupilSs=mean(meanpupil2,na.rm = TRUE),sepupil=sd(meanpupil2, na.rm = TRUE)/sqrt(length(meanpupil2))) #collapse across subjects
+
+#above average
+coo8 <- coo7
+
+#cor.test
+xyz1 <-cor.test(coo8$timesseen[coo8$image==1], coo8$meanpupilSs[coo8$image==1], alternative = "two.sided", method = "pearson")
+xyz1
+xyz2 <-cor.test(coo8$timesseen[coo8$image==2], coo8$meanpupilSs[coo8$image==2], alternative = "two.sided", method = "pearson")
+xyz2
+xyz3 <-cor.test(coo8$timesseen[coo8$image==3], coo8$meanpupilSs[coo8$image==3], alternative = "two.sided", method = "pearson")
+xyz3
+
+yoo3 <- data.frame(image= numeric(3), comments= numeric(3))
+yoo3$image <- 1:3
+yoo3$comments[1] <- "cor = 0.43, p = 0.03373*"
+yoo3$comments[2] <- "cor = 0.52, p = 0.008958*"
+yoo3$comments[3] <- "cor = 0.66, p = 0.0004609*"
+
+famtrialsnames <- c(
+                    `1` = "First in triplet",
+                    `2` = "Second in triplet",
+                    `3` = "Third in triplet"
+                    )
+
+ggplot(coo8,aes(x=timesseen,y=meanpupilSs,color=factor(image),fill=factor(image)))+geom_point()+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  scale_colour_manual(values=color.v1)+scale_fill_manual(values=color.v1)+
+  ggtitle("Pupil change during viewing period (750ms) throughout experiment")+
+  geom_text(data=yoo3, aes(x=12, y=0.09, label=comments), colour="black", size = 7)+
+  labs(x = "Times seen triplet", y = "Change from baseline")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+xlim(0, 24)+guides(color=FALSE)+facet_wrap(~image,labeller = as_labeller(famtrialsnames))+theme(strip.text = element_text(size=16))+stat_smooth(method=lm)+theme(legend.position="none")+scale_y_continuous(labels=percent,limits=c(-.05,.1),breaks=seq(-.05,.1,0.02))
+
+```
+
+breaking it down by accuracy
+
+times seen triplet for 500ms X accuracy (above or below)
+```{r}
+boo1 <- subset(poo, TIMECODE2 < 502) #only looking at first 500ms, which is the blank screen
+
+#ABOVE AVERAGE
+boo_a <- subset(boo1, accuracy == 1)
+  
+#average pupil size 
+boo2 <- ddply(boo_a,.(sub,image,timesseen),summarise,meanpupil2=mean(newpupil,na.rm = TRUE)) #collapse triplet id
+boo3 <- ddply(boo2,.(image,timesseen),summarise,meanpupilSs=mean(meanpupil2,na.rm = TRUE),sepupil=sd(meanpupil2, na.rm = TRUE)/sqrt(length(meanpupil2))) #collapse across subjects
+#remove first time seeing image 
+boo3 <- subset(boo3, timesseen > 1)
+#cor.test
+xyz1 <-cor.test(boo3$timesseen[boo3$image==1], boo3$meanpupilSs[boo3$image==1], alternative = "two.sided", method = "pearson")
+xyz1
+xyz2 <-cor.test(boo3$timesseen[boo3$image==2], boo3$meanpupilSs[boo3$image==2], alternative = "two.sided", method = "pearson")
+xyz2
+xyz3 <-cor.test(boo3$timesseen[boo3$image==3], boo3$meanpupilSs[boo3$image==3], alternative = "two.sided", method = "pearson")
+xyz3
+
+yoo3 <- data.frame(image= numeric(3), comments= numeric(3))
+yoo3$image <- 1:3
+yoo3$comments[1] <- "cor = -0.17, p = 0.4231"
+yoo3$comments[2] <- "cor = 0.25, p = 0.2439"
+yoo3$comments[3] <- "cor = 0.16, p = 0.4615"
+
+ggplot(boo3,aes(x=timesseen,y=meanpupilSs,color=factor(image),fill=factor(image)))+
+  geom_point()+theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  scale_colour_manual(values=color.v1)+scale_fill_manual(values=color.v1)+
+  ggtitle("Pupil change during anticipatory period (500ms) (above average)")+
+  labs(x = "Times seen triplet", y = "Change from baseline")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+xlim(0, 24)+
+  facet_wrap(~image)+theme(strip.text = element_text(size=16))+
+  stat_smooth(method=lm)+theme(legend.position="none")+
+  scale_y_continuous(labels=percent,limits=c(-0.1,.1),breaks=seq(-0.1,.1,0.02))+
+  geom_text(data=yoo3, aes(x=15, y=-.08, label=comments), colour="black", size = 7)
+  
+#BELOW AVERAGE  
+boo_b <- subset(boo1, accuracy == 0)
+  
+#average pupil size 
+boo12 <- ddply(boo_b,.(sub,image,timesseen),summarise,meanpupil2=mean(newpupil,na.rm = TRUE)) #collapse triplet id
+boo13 <- ddply(boo12,.(image,timesseen),summarise,meanpupilSs=mean(meanpupil2,na.rm = TRUE),sepupil=sd(meanpupil2, na.rm = TRUE)/sqrt(length(meanpupil2))) #collapse across subjects
+#remove first time seeing image 
+boo13 <- subset(boo13, timesseen > 1)
+#cor.test
+xyz1 <-cor.test(boo13$timesseen[boo13$image==1], boo13$meanpupilSs[boo3$image==1], alternative = "two.sided", method = "pearson")
+xyz1
+xyz2 <-cor.test(boo13$timesseen[boo13$image==2], boo13$meanpupilSs[boo3$image==2], alternative = "two.sided", method = "pearson")
+xyz2
+xyz3 <-cor.test(boo13$timesseen[boo13$image==3], boo13$meanpupilSs[boo3$image==3], alternative = "two.sided", method = "pearson")
+xyz3
+
+yoo3 <- data.frame(image= numeric(3), comments= numeric(3))
+yoo3$image <- 1:3
+yoo3$comments[1] <- "cor = 0.029, p = 0.8943"
+yoo3$comments[2] <- "cor = -0.0006, p = 0.9976"
+yoo3$comments[3] <- "cor = 0.235815, p = 0.2787"
+
+ggplot(boo13,aes(x=timesseen,y=meanpupilSs,color=factor(image),fill=factor(image)))+
+  geom_point()+theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  scale_colour_manual(values=color.v1)+scale_fill_manual(values=color.v1)+
+  ggtitle("Pupil change during anticipatory period (500ms) (below average)")+
+  labs(x = "Times seen triplet", y = "Change from baseline")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+xlim(0, 24)+
+  facet_wrap(~image)+theme(strip.text = element_text(size=16))+
+  stat_smooth(method=lm)+theme(legend.position="none")+
+  scale_y_continuous(labels=percent,limits=c(-.1,.1),breaks=seq(-.1,0.1,0.02))+
+  geom_text(data=yoo3, aes(x=15, y=-0.08, label=comments), colour="black", size = 7)
+
+```
+
+times seen triplet for 750ms for new timecode, baselining everything to the first image in triplet
+```{r}
+boo1 <- subset(poo, TIMECODE > 500 & TIMECODE < 1251) #only looking at last 750, which is the pic
+
+#ABOVE AVERAGE
+boo_a <- subset(boo1, accuracy == 1)
+  
+#average pupil size 
+boo2 <- ddply(boo_a,.(sub,image,timesseen),summarise,meanpupil2=mean(newpupil,na.rm = TRUE)) #collapse triplet id
+boo3 <- ddply(boo2,.(image,timesseen),summarise,meanpupilSs=mean(meanpupil2,na.rm = TRUE),sepupil=sd(meanpupil2, na.rm = TRUE)/sqrt(length(meanpupil2))) #collapse across subjects
+#remove first time seeing image 
+boo3 <- subset(boo3, timesseen > 1)
+#cor.test
+xyz1 <-cor.test(boo3$timesseen[boo3$image==1], boo3$meanpupilSs[boo3$image==1], alternative = "two.sided", method = "pearson")
+xyz1
+xyz2 <-cor.test(boo3$timesseen[boo3$image==2], boo3$meanpupilSs[boo3$image==2], alternative = "two.sided", method = "pearson")
+xyz2
+xyz3 <-cor.test(boo3$timesseen[boo3$image==3], boo3$meanpupilSs[boo3$image==3], alternative = "two.sided", method = "pearson")
+xyz3
+
+yoo3 <- data.frame(image= numeric(3), comments= numeric(3))
+yoo3$image <- 1:3
+yoo3$comments[1] <- "cor = 0.277, p = 0.1997"
+yoo3$comments[2] <- "cor = 0.23, p = 0.2742"
+yoo3$comments[3] <- "cor = 0.402, p = 0.056"
+
+ggplot(boo3,aes(x=timesseen,y=meanpupilSs,color=factor(image),fill=factor(image)))+
+  geom_point()+theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  scale_colour_manual(values=color.v1)+scale_fill_manual(values=color.v1)+
+  ggtitle("Pupil change during viewing period (750ms) (above average)")+
+  labs(x = "Times seen triplet", y = "Change from baseline")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+xlim(0, 24)+
+  facet_wrap(~image)+theme(strip.text = element_text(size=16))+
+  stat_smooth(method=lm)+theme(legend.position="none")+
+  scale_y_continuous(labels=percent,limits=c(-0.1,.1),breaks=seq(-0.1,.1,0.02))+
+  geom_text(data=yoo3, aes(x=15, y=-.08, label=comments), colour="black", size = 7)
+  
+#BELOW AVERAGE  
+boo_b <- subset(boo1, accuracy == 0)
+  
+#average pupil size 
+boo12 <- ddply(boo_b,.(sub,image,timesseen),summarise,meanpupil2=mean(newpupil,na.rm = TRUE)) #collapse triplet id
+boo13 <- ddply(boo12,.(image,timesseen),summarise,meanpupilSs=mean(meanpupil2,na.rm = TRUE),sepupil=sd(meanpupil2, na.rm = TRUE)/sqrt(length(meanpupil2))) #collapse across subjects
+#remove first time seeing image 
+boo13 <- subset(boo13, timesseen > 1)
+#cor.test
+xyz1 <-cor.test(boo13$timesseen[boo13$image==1], boo13$meanpupilSs[boo3$image==1], alternative = "two.sided", method = "pearson")
+xyz1
+xyz2 <-cor.test(boo13$timesseen[boo13$image==2], boo13$meanpupilSs[boo3$image==2], alternative = "two.sided", method = "pearson")
+xyz2
+xyz3 <-cor.test(boo13$timesseen[boo13$image==3], boo13$meanpupilSs[boo3$image==3], alternative = "two.sided", method = "pearson")
+xyz3
+
+yoo3 <- data.frame(image= numeric(3), comments= numeric(3))
+yoo3$image <- 1:3
+yoo3$comments[1] <- "cor = 0.58, p = 0.003604"
+yoo3$comments[2] <- "cor = 0.209, p = 0.337"
+yoo3$comments[3] <- "cor = 0.32, p = 0.1363"
+
+ggplot(boo13,aes(x=timesseen,y=meanpupilSs,color=factor(image),fill=factor(image)))+
+  geom_point()+theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  scale_colour_manual(values=color.v1)+scale_fill_manual(values=color.v1)+
+  ggtitle("Pupil change during viewing period (750ms) (below average)")+
+  labs(x = "Times seen triplet", y = "Change from baseline")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+xlim(0, 24)+
+  facet_wrap(~image)+theme(strip.text = element_text(size=16))+
+  stat_smooth(method=lm)+theme(legend.position="none")+
+  scale_y_continuous(labels=percent,limits=c(-.1,.1),breaks=seq(-.1,0.1,0.02))+
+  geom_text(data=yoo3, aes(x=15, y=-0.08, label=comments), colour="black", size = 7)
+
+```

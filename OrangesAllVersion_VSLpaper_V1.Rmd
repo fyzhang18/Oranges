@@ -1,0 +1,598 @@
+---
+title: "Jan 30 2018"
+author: "Felicia Zhang"
+date: '2018-01-30'
+output: html_document
+---
+
+Recreating graphs for VSL paper
+Making sure graphs are consistent with labels, colors
+```{r setup, include=FALSE}
+library(ggplot2) 
+library(zoo)
+library(reshape)
+library(plyr)
+library(scales) 
+library(data.table)
+library(signal)
+library(matrixStats)
+library(lme4)
+library(arm)
+library(RColorBrewer)
+library(lmerTest)
+
+#1. load data (master)
+OmixOrig = readRDS("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mix/Data/OMix.rds")
+OV1Orig = readRDS("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges/Data/OrangesV1.rds") 
+OV2Orig = readRDS("/Volumes/emberson/ResearchProjects/Pupillometry/OrangesV2/Data/OrangesV2.rds")
+OV2Orig$X.2 <- NULL
+OV2Orig$X.1 <- NULL
+
+#O_V1:
+#pupil corrected = pupil change from baseline
+#image = triplet position (1, 2 or 3)
+#newtime = time for each image in triplet (0-1250ms)
+#triplet = which triplet it is (1, 2, 3 or 4)
+#sub = faster way to index subjects
+#triplet_trialindex = trial number based on triplet (range 1 - 96)
+#timesseen = times seen the triplet (range 1- 24)
+#accuracy = coding if subject scored above or below the average accuracy (0 = below, 1 = above)
+#newtime2 = time for each triplet (0-3750ms)
+#newtime3 = recode time: 500ms, and then 750ms (0-1250ms)
+#timecode2 = recode time: 500ms, and then 750ms (0-1250ms)
+#timecode3 = time for each triplet (0-3750ms)
+
+#O_V2:
+#pupil corrected = baseline is each image
+#pupil corrected 2 = baseline first image of triplet
+#pupil corrected 3 = baseline using predicting image of pair
+#phase = 0 = familiarzation, 1 = test
+#imagetype = first, second or third image in triplet
+#timesseen = times seen the triplet (range 1- 20)
+#trialaccuracy = if test phase trial was right or wrong
+
+#OMix:
+#pupil corrected = baseline is each image
+#pupil corrected 2 = baseline first image of triplet
+#block = 1 = triplet, 2 = random
+#imageseq = first, second or third image in triplet
+#timesseen = times seen the triplet (range 1- 20)
+#TRIP_TRIAL_INDEX = correct triplet trial number
+#TIMECODE2 = correct 0 - 3754ms
+```
+
+Setting color palettes
+```{r}
+#colors
+color.t <- c("#FFCC00", "#ff9900","#FF6600")
+color.a <- c("#FFCC00", "#ff9900") 
+color.aa <- c("#bacfe3", "#2875be")  #blue
+color.ba <- c("#f15e6a", "#9c2b35")  #red
+color.trip <- c("#c9e29f","#58a329","#327508")  #triplet green
+color.ran <- c("#ddcfe8", "#7c60c3","#481f9d")  #random purple
+```
+
+Oranges V1 Graphs
+```{r}
+a1 <- OV1Orig
+
+#histogram of accuracy
+OV1accuracy = read.csv("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges/Data/Oranges_accuracy.csv")
+OV1accuracy<-OV1accuracy[!(OV1accuracy$subject==2 |OV1accuracy$subject==11|OV1accuracy$subject==33 |OV1accuracy$subject==38),] #remove bad subjects
+c <- mean(OV1accuracy$accuracy)
+
+ggplot(OV1accuracy,aes(OV1accuracy$accuracy))+geom_histogram()+
+  scale_y_continuous(limits=c(0,10),breaks=seq(0,10,1))+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+ggtitle("Histogram of accuracy")+
+  labs(x = "Accuracy (%)", y = "Number of participants")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  scale_x_continuous(label=percent,limits=c(0,1),breaks=seq(0,1,.1))+
+  geom_vline(xintercept = c, linetype = "longdash", color="red",size = 1)+
+  theme(plot.title = element_text(hjust = 0.5))
+  
+#timecourse
+a=c(500, 1750, 3000)
+b=c(1250,2500)
+
+a2 <- ddply(a1,.(RECORDING_SESSION_LABEL,TIMECODE3),summarise,meanPUPIL=mean(newpupil,na.rm = TRUE)) #collapse across subjects
+a3 <- ddply(a2,.(TIMECODE3),summarise,meanPUPILSs=mean(meanPUPIL,na.rm = TRUE),sePUPIL=sd(meanPUPIL, na.rm = TRUE)/sqrt(length(meanPUPIL))) #collapse across subjects
+
+ggplot(a3,aes(x=TIMECODE3,y=meanPUPILSs))+geom_line()+
+  geom_ribbon(aes(ymin=meanPUPILSs-sePUPIL,ymax=meanPUPILSs+sePUPIL),alpha=0.4)+
+  scale_y_continuous(labels=percent,limits=c(-.1,.1),breaks=seq(-.1,.1,0.02))+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+ggtitle("Pupil change during triplet")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  geom_vline(xintercept = b, size = 1.5)+
+  geom_vline(xintercept = a, linetype = "longdash")+
+  scale_x_continuous(limits=c(0,3750),breaks=seq(0,3750,500), expand = c(0, 0))+
+  scale_fill_manual(values=color.t)+scale_colour_manual(values=color.t)
+
+#timecourse overlay
+b1 <- ddply(a1,.(RECORDING_SESSION_LABEL,image,TIMECODE2),summarise,meanPUPIL=mean(newpupil,na.rm = TRUE)) #collapse across subjects
+b2 <- ddply(b1,.(image,TIMECODE2),summarise,meanPUPILSs=mean(meanPUPIL,na.rm = TRUE),sePUPIL=sd(meanPUPIL, na.rm = TRUE)/sqrt(length(meanPUPIL))) #collapse across subjects
+
+ggplot(b2,aes(x=TIMECODE2,y=meanPUPILSs,color=factor(image),fill=factor(image)))+geom_line()+
+  geom_ribbon(aes(ymin=meanPUPILSs-sePUPIL,ymax=meanPUPILSs+sePUPIL),alpha=0.4)+
+  scale_y_continuous(labels=percent,limits=c(-.1,.1),breaks=seq(-.1,.1,0.02))+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  ggtitle("Pupil change during triplet")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  geom_vline(xintercept = 500, linetype = "longdash")+
+  scale_x_continuous(limits=c(0,1250), breaks=seq(0,1250,200), expand = c(0, 0))+
+  scale_fill_manual(values=color.t, name="Image",breaks=c("1", "2","3"),labels=c("1", "2","3"))+
+  guides(color=FALSE)+
+  scale_colour_manual(values=color.t)+
+  theme(legend.position = "bottom")
+
+#triplet timecourse, for accuracy
+c1 <- ddply(a1,.(RECORDING_SESSION_LABEL,accuracy,TIMECODE3),summarise,meanPUPIL=mean(newpupil,na.rm = TRUE)) #collapse across subjects
+c2 <- ddply(c1,.(accuracy,TIMECODE3),summarise,meanPUPILSs=mean(meanPUPIL,na.rm = TRUE),sePUPIL=sd(meanPUPIL, na.rm = TRUE)/sqrt(length(meanPUPIL))) #collapse across subjects
+
+ggplot(c2,aes(x=TIMECODE3,y=meanPUPILSs,color=factor(accuracy),fill=factor(accuracy)))+
+  geom_line()+
+  geom_ribbon(aes(ymin=meanPUPILSs-sePUPIL,ymax=meanPUPILSs+sePUPIL),alpha=0.4)+
+  scale_y_continuous(labels=percent,limits=c(-.1,.1),breaks=seq(-.1,.1,0.02))+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+ggtitle("Pupil change during triplet")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  geom_vline(xintercept = b, size = 1.5)+
+  geom_vline(xintercept = a, linetype = "longdash")+
+  scale_x_continuous(limits=c(0,3750),breaks=seq(0,3750,500), expand = c(0, 0))+
+  scale_fill_brewer(palette="Set1",name="Accuracy",breaks=c("0", "1"),labels=c("below average", "above average"))+guides(color=FALSE)+
+  scale_colour_brewer(palette="Set1")+
+  theme(legend.position = "bottom")
+
+```
+
+Oranges V1 Analyses: Accuracy
+```{r}
+#ACCURACY
+#The average accuracy score on the test phase was 60% which is above chance (50%) (need to check if 60% is stat sig above 50%). 
+OV1accuracy<-OV1accuracy[!(OV1accuracy$subject==2 |OV1accuracy$subject==11|OV1accuracy$subject==33 |OV1accuracy$subject==38),] #remove bad subjects
+
+res <- t.test(OV1accuracy$accuracy, mu = 0.5)
+res
+#t = 5.23, p-value < 0.001
+```
+
+Oranges V1 Analyses: Regression
+pupil change ~ accuracy + image + times seen
+```{r}
+#add in continuous accuracy variable
+OV1Orig$accuracy2 <- 0
+
+sub <- unique(OV1Orig$sub)
+for (i in 1:length(sub)) {
+  OV1Orig$accuracy2[OV1Orig$sub==sub[i]] <- OV1accuracy$accuracy[i]
+}
+
+#anticipatory period: 500ms
+famtrials3 <- subset(OV1Orig, TIMECODE2 < 502)
+
+#participant (1-53), triplet presentation (1-24), image position (1-3), overall position in the stream (1-288), accuracy
+model500 <- ddply(famtrials3,.(sub,timesseen,image,triplet_trialindex,accuracy2),summarise,meanpupil=mean(newpupil,na.rm = TRUE)) 
+
+#create nested models to help you pick 
+fit1 <- lmer(meanpupil ~ image + (1|sub), data = model500)
+
+#fit2 <- lmer(meanpupil ~ image + factor(accuracy) + (1 |sub), data = model500) #can also include accuracy as continuous
+fit2 <- lmer(meanpupil ~ image + accuracy2 + (1|sub), data = model500) 
+
+fit3 <- lmer(meanpupil ~ image + accuracy2 + timesseen + (1|sub), data = model500) #(1|sub = intercept)
+
+anova(fit1,fit2,fit3)
+#anova measures difference for residual sum of squares (RSS) is a statistical technique used to measure the amount of variance in a data set that is not explained by the regression model
+#including timesseen and accuracy helped a lot p = 0.026
+
+summary(fit3) #image + accuracy + timesseen + (1 | sub)
+#within a trial, pupil size increases for image seen p = 3.91e-06***
+#throughout the experiment, size increases p = 0.0263*
+#no diff in accuracy :( p = 0.2835
+
+#add interaction
+fit4 <- lmer(meanpupil ~ image * accuracy2 * timesseen + (1|sub), data = model500) #(1|sub = intercept)
+summary(fit4)
+#nothing
+
+#750ms
+famtrials3 <- subset(OV1Orig, TIMECODE2 > 500)
+
+#participant (1-53), triplet presentation (1-24), image position (1-3), overall position in the stream (1-288), accuracy
+model750 <- ddply(famtrials3,.(sub,timesseen,image,triplet_trialindex,accuracy2),summarise,meanpupil=mean(newpupil,na.rm = TRUE)) 
+
+#create nested models to help you pick 
+fit11 <- lmer(meanpupil ~ image + (1|sub), data = model750)
+
+#fit2 <- lmer(meanpupil ~ image + factor(accuracy) + (1 |sub), data = model500) #can also include accuracy as continuous
+fit21 <- lmer(meanpupil ~ image + accuracy2 + (1|sub), data = model750) 
+
+fit31 <- lmer(meanpupil ~ image + accuracy2 + timesseen + (1|sub), data = model750) #(1|sub = intercept)
+
+anova(fit11,fit21,fit31)
+#comparing it to fit1
+#anova measures difference for residual sum of squares (RSS) is a statistical technique used to measure the amount of variance in a data set that is not explained by the regression model
+#including timesseen and accuracy helped a lot p = 1.9e-07***
+
+summary(fit31) #image + accuracy + timesseen + (1 | sub)
+#within a trial, no pupil size increases for image seen
+#throughout the experiment, size increases timesseen p = 1.93e-07
+#no diff in accuracy :(
+
+#add interaction
+fit41 <- lmer(meanpupil ~ image * accuracy2 * timesseen + (1|sub), data = model750) #(1|sub = intercept)
+summary(fit41)
+#nothing
+
+```
+
+Oranges V2 Graphs: Timecourse 
+```{r}
+f1 <- OV2Orig
+
+#ACCURACY HISTOGRAM
+z1 <- ddply(f1,.(subID),summarise,accuracy=mean(subaccuracy,na.rm = TRUE)) 
+dodge <- position_dodge(width=0.9)
+c <- mean(z1$accuracy)
+length(which(z1$accuracy > 0.5))
+
+ggplot(z1,aes(z1$accuracy))+geom_histogram()+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+ggtitle("Histogram of accuracy")+
+  labs(x = "Accuracy (%)", y = "Number of participants")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  scale_x_continuous(label=percent,limits=c(0,1),breaks=seq(0,1,.1))+
+  geom_vline(xintercept = c, linetype = "longdash", color="red",size = 1)+
+  theme(plot.title = element_text(hjust = 0.5))+
+  scale_y_continuous(limits=c(0,15),breaks=seq(0,15,1))
+
+#TIMECOURSE PLOTS
+g1 <- ddply(f1,.(RECORDING_SESSION_LABEL,TIMECODE,imagetype),summarise,meanPUPIL=mean(PUPIL_CORRECTED_3,na.rm = TRUE)) #collapse across trials
+g2 <- ddply(g1,.(imagetype,TIMECODE),summarise,meanPUPILSs=mean(meanPUPIL,na.rm = TRUE),sePUPIL=sd(meanPUPIL, na.rm = TRUE)/sqrt(length(meanPUPIL))) #collapse across subjects
+
+#overlay
+ggplot(g2,aes(x=TIMECODE,y=meanPUPILSs,color=factor(imagetype),fill=factor(imagetype)))+
+  geom_line()+
+  scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+  geom_ribbon(aes(ymin=meanPUPILSs-sePUPIL,ymax=meanPUPILSs+sePUPIL),alpha=0.3)+
+  scale_y_continuous(labels=percent,limits=c(-.05,.05),breaks=seq(-.05,.05,0.01))+
+  guides(color=FALSE)+theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  ggtitle("Timecourse for trial type")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  scale_fill_manual(values=color.t,name="Image",breaks=c("0", "1","2"),labels=c("0", "1","2"))+
+  geom_vline(xintercept = 500,linetype = "longdash")+
+  scale_color_manual(values=color.t)+
+  theme(legend.position = "bottom")
+
+```
+
+Oranges V2 Graphs: Timecourse with accuracy
+```{r}
+#group accuracy as above or below chance 
+f1 <- OV2Orig
+f1$accuracyV2 <- 0
+f1$accuracyV2[f1$subaccuracy > 0.5] <- 1
+
+#overlay above avg + below avg
+h1 <- subset(f1, accuracyV2==1)
+h2 <- ddply(h1,.(RECORDING_SESSION_LABEL,TIMECODE,imagetype),summarise,meanPUPIL=mean(PUPIL_CORRECTED_3,na.rm = TRUE)) #collapse across trials
+h3 <- ddply(h2,.(imagetype,TIMECODE),summarise,meanPUPILSs=mean(meanPUPIL,na.rm = TRUE),sePUPIL=sd(meanPUPIL, na.rm = TRUE)/sqrt(length(meanPUPIL))) #collapse across subjects
+
+h5 <- subset(f1, accuracyV2==0)
+h6 <- ddply(h5,.(RECORDING_SESSION_LABEL,TIMECODE,imagetype),summarise,meanPUPIL=mean(PUPIL_CORRECTED_3,na.rm = TRUE)) #collapse across trials
+h7 <- ddply(h6,.(imagetype,TIMECODE),summarise,meanPUPILSs=mean(meanPUPIL,na.rm = TRUE),sePUPIL=sd(meanPUPIL, na.rm = TRUE)/sqrt(length(meanPUPIL))) #collapse across subjects
+
+#num of subjects in above acc: 
+length(unique(h1$RECORDING_SESSION_LABEL))
+length(unique(h5$RECORDING_SESSION_LABEL))
+
+h3$accuracy <- 1
+h7$accuracy <- 0
+hfinal <- rbind(h3,h7)
+trialtype <- c(`1` = "Predicting",`2` = "Predicted")
+
+ggplot(hfinal,aes(x=TIMECODE,y=meanPUPILSs,color=factor(accuracy),fill=factor(accuracy)))+
+  geom_line()+geom_ribbon(aes(ymin=meanPUPILSs-sePUPIL,ymax=meanPUPILSs+sePUPIL),alpha=0.4)+
+  scale_y_continuous(labels=percent,limits=c(-.05,.05),breaks=seq(-.05,0.05,0.01))+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  ggtitle("Timecourse for trial type")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  geom_vline(xintercept = 500, linetype = "longdash")+
+  scale_x_continuous(limits=c(0,1300),breaks=seq(0,1300,200), expand = c(0, 0))+
+  facet_wrap(~imagetype,labeller = as_labeller(trialtype))+
+  theme(strip.text = element_text(size=16))+
+  scale_fill_brewer(palette="Set1",name="Accuracy", breaks=c("0", "1"),labels=c("below average", "above average"))+
+  guides(color=FALSE)+
+  scale_colour_brewer(palette="Set1")+
+  theme(legend.position = "bottom")
+
+#overlay above avg + trial type
+ggplot(h3,aes(x=TIMECODE,y=meanPUPILSs,color=factor(imagetype),fill=factor(imagetype)))+
+  geom_line()+
+  scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+  geom_ribbon(aes(ymin=meanPUPILSs-sePUPIL,ymax=meanPUPILSs+sePUPIL),alpha=0.3)+
+  scale_y_continuous(labels=percent,limits=c(-.05,.05),breaks=seq(-.05,0.05,0.01))+
+  guides(color=FALSE)+theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  ggtitle("Timecourse for trial type (above average)")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  scale_fill_manual(values=color.aa,name="Image",breaks=c("0","1","2"),labels=c("0", "1","2"))+
+  geom_vline(xintercept = 500,linetype = "longdash")+
+  scale_color_manual(values=color.aa)+
+  theme(legend.position = "bottom")
+
+#overlay below avg + trial type
+ggplot(h7,aes(x=TIMECODE,y=meanPUPILSs,color=factor(imagetype),fill=factor(imagetype)))+
+  geom_line()+
+  scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+  geom_ribbon(aes(ymin=meanPUPILSs-sePUPIL,ymax=meanPUPILSs+sePUPIL),alpha=0.3)+
+  scale_y_continuous(labels=percent,limits=c(-.05,.05),breaks=seq(-.05,0.05,0.01))+
+  guides(color=FALSE)+theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  ggtitle("Timecourse for trial type (below average)")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  scale_fill_manual(values=color.ba,name="Image",breaks=c("0", "1","2"),labels=c("0", "1","2"))+
+  geom_vline(xintercept = 500,linetype = "longdash")+
+  scale_color_manual(values=color.ba)+
+  theme(legend.position = "bottom")
+
+```
+
+Oranges V2 Analyses: Accuracy
+```{r}
+#ACCURACY
+#The average accuracy score on the test phase was 60% which is above chance (50%) (need to check if 60% is stat sig above 50%). 
+z2 <- ddply(OV2Orig,.(subID),summarise,accuracy=mean(subaccuracy,na.rm = TRUE)) 
+
+res <- t.test(z2$accuracy, mu = 0.5)
+res
+#t = 5.23, p-value < 0.001
+
+#comparing accuracy for V1 and V2
+#accuracy on V2 is significantly worse
+t.test(OV1accuracy$accuracy, z2$accuracy, var.equal = FALSE)
+```
+
+Oranges V2 Analyses: Regression
+pupil change ~ accuracy + image + times seen
+```{r}
+#anticipatory period: 500ms
+famtrials3 <- subset(f1, TIMECODE < 502)
+
+#participant (1-53), triplet presentation (1-24), image position (1-3), overall position in the stream (1-288), accuracy
+model500 <- ddply(famtrials3,.(subID,timesseen,imagetype,subaccuracy,accuracyV2),summarise,meanpupil=mean(PUPIL_CORRECTED_3,na.rm = TRUE)) 
+
+#create nested models to help you pick 
+fit1 <- lmer(meanpupil ~ imagetype + (1|subID), data = model500)
+
+#fit2 <- lmer(meanpupil ~ image + factor(accuracy) + (1 |subID), data = model500) #can also include accuracy as continuous
+fit2 <- lmer(meanpupil ~ imagetype + subaccuracy + (1|subID), data = model500) 
+
+fit3 <- lmer(meanpupil ~ imagetype + subaccuracy + timesseen + (1|subID), data = model500) #(1|sub = intercept)
+
+anova(fit1,fit2,fit3)
+#anova measures difference for residual sum of squares (RSS) is a statistical technique used to measure the amount of variance in a data set that is not explained by the regression model
+#nothing is significant
+summary(fit3)
+
+#add interaction
+fit4 <- lmer(meanpupil ~ imagetype * subaccuracy * timesseen + (1|subID), data = model500) #(1|sub = intercept)
+summary(fit4)
+#nothing
+
+#750ms
+famtrials3 <- subset(f1, TIMECODE > 500)
+
+#participant (1-53), triplet presentation (1-24), image position (1-3), overall position in the stream (1-288), accuracy
+model750 <- ddply(famtrials3,.(subID,timesseen,imagetype,subaccuracy,accuracyV2),summarise,meanpupil=mean(PUPIL_CORRECTED_3,na.rm = TRUE)) 
+
+#create nested models to help you pick 
+fit11 <- lmer(meanpupil ~ imagetype + (1|subID), data = model750)
+
+#fit2 <- lmer(meanpupil ~ imagetype + factor(accuracy) + (1 |sub), data = model500) #can also include accuracy as continuous
+fit21 <- lmer(meanpupil ~ imagetype + subaccuracy + (1|subID), data = model750) 
+
+fit31 <- lmer(meanpupil ~ imagetype + subaccuracy + timesseen + (1|subID), data = model750) #(1|sub = intercept)
+
+anova(fit11,fit21,fit31)
+#comparing it to fit1
+#anova measures difference for residual sum of squares (RSS) is a statistical technique used to measure the amount of variance in a data set that is not explained by the regression model
+#including timesseen and accuracy helped a lot p = 0.01***
+
+summary(fit31) #image + accuracy + timesseen + (1 | sub)
+#within a trial, no pupil size increases for image seen
+#throughout the experiment, size increases timesseen p = 1.93e-07
+#no diff in accuracy :(
+
+#add interaction
+fit41 <- lmer(meanpupil ~ image * accuracy2 * timesseen + (1|sub), data = model750) #(1|sub = intercept)
+summary(fit41)
+#nothing
+
+```
+
+Oranges Mix Graphs
+```{r}
+#only keep center looks
+orig2 <- OmixOrig
+a <- which(orig2$RIGHT_GAZE_X < 440)
+orig2 <- orig2[-c(a), ]
+a <- which(orig2$RIGHT_GAZE_Y < 312)
+orig2 <- orig2[-c(a), ]
+a <- which(orig2$RIGHT_GAZE_X > 840)
+orig2 <- orig2[-c(a), ]
+a <- which(orig2$RIGHT_GAZE_Y > 712)
+orig2 <- orig2[-c(a), ]
+
+block1 <- subset(orig2, TRIAL_INDEX < 241)
+block2 <- subset(orig2, TRIAL_INDEX > 240)
+
+###Timecourse
+#block 1 overlay
+d1 <- ddply(block1,.(subID,TIMECODE,imageseq),summarise,meanpupil=mean(PUPIL_CORRECTED_2,na.rm = TRUE))
+d2 <- ddply(d1,.(TIMECODE,imageseq),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+ggplot(d2,aes(x=TIMECODE,y=meanPUPIL,color=factor(imageseq),fill=factor(imageseq)))+
+  geom_line()+
+  scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+  geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.3)+
+  scale_y_continuous(labels=percent,limits=c(-.1,.1),breaks=seq(-.1,.1,.02))+
+  guides(color=FALSE)+theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  ggtitle("Timecourse Block 1 (Triplet)")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  scale_fill_manual(name="Image",values=color.trip)+
+  geom_vline(xintercept = 500,linetype = "longdash")+
+  scale_color_manual(values=color.trip)+
+  theme(legend.position = "bottom")
+
+#block 2 overlay
+goo <- ddply(block2,.(subID,TIMECODE,imageseq),summarise,meanpupil=mean(PUPIL_CORRECTED_2,na.rm = TRUE))
+goo2 <- ddply(goo,.(TIMECODE,imageseq),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+ggplot(goo2,aes(x=TIMECODE,y=meanPUPIL,color=factor(imageseq),fill=factor(imageseq)))+
+  geom_line()+
+  scale_x_continuous(limits=c(0,1250),breaks=seq(0,1250,200), expand = c(0, 0))+
+  geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.3)+
+  scale_y_continuous(labels=percent,limits=c(-.1,.1),breaks=seq(-.1,.1,.02))+
+  guides(color=FALSE)+theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  ggtitle("Timecourse Block 2 (Random)")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  scale_fill_manual(name="Image",values=color.ran)+
+  geom_vline(xintercept = 500,linetype = "longdash")+
+  theme(legend.position = "bottom")+
+  scale_colour_manual(values=color.ran)
+
+#timecourse block 1 + block 2 overlay
+
+coo1 <- ddply(block1,.(subID,TIMECODE2),summarise,meanpupil=mean(PUPIL_CORRECTED_2,na.rm = TRUE))
+coo2 <- ddply(block2,.(subID,TIMECODE2),summarise,meanpupil=mean(PUPIL_CORRECTED_2,na.rm = TRUE))
+coo1$block <- 1
+coo2$block <- 2
+coo3 <- ddply(coo1,.(TIMECODE2,block),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+coo4 <- ddply(coo2,.(TIMECODE2,block),summarise,meanPUPIL=mean(meanpupil,na.rm = TRUE),sePUPIL=sd(meanpupil, na.rm = TRUE)/sqrt(length(meanpupil)))
+
+a = c(500,1750,3000)
+aa = c(1250,2500)
+
+coo5 <- rbind(coo3,coo4)
+
+ggplot(coo5,aes(x=TIMECODE2,y=meanPUPIL,color=factor(block),fill=factor(block)))+geom_line()+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+ggtitle("Timecourse")+
+  labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
+  theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
+  geom_ribbon(aes(ymin=meanPUPIL-sePUPIL,ymax=meanPUPIL+sePUPIL),alpha=0.4)+
+  scale_x_continuous(limits=c(0,3754),breaks=seq(0,3754,500), expand = c(0, 0))+
+  theme(strip.text = element_text(size=16))+
+  scale_y_continuous(labels=percent,limits=c(-.1,.1),breaks=seq(-.1,.1,.02))+
+  guides(color=FALSE)+
+  scale_fill_brewer(palette="Accent",name="Block",breaks=c("1","2"),labels=c("Triplet", "Random"))+
+  scale_color_brewer(palette="Accent")+
+  theme(legend.position = "bottom")+
+  geom_vline(xintercept = a, linetype = "longdash")+
+  geom_vline(xintercept = aa, size =1)
+```
+
+Oranges Mix Analyses: Regression
+pupil change ~ image + times seen + block
+```{r}
+#anticipatory period: 500ms
+famtrials3 <- subset(orig2, TIMECODE < 502)
+
+#participant (1-53), timesseen (1-24), image position (1-3), block (0,1), accuracy
+model500 <- ddply(famtrials3,.(subID,timesseen,imageseq,block),summarise,meanpupil=mean(PUPIL_CORRECTED_2,na.rm = TRUE)) 
+model500$block <- model500$block-1
+
+#create nested models to help you pick 
+fit1 <- lmer(meanpupil ~ imageseq + (1|subID), data = model500)
+
+#fit2 <- lmer(meanpupil ~ image + factor(accuracy) + (1 |subID), data = model500) #can also include accuracy as continuous
+fit2 <- lmer(meanpupil ~ imageseq + block + (1|subID), data = model500) 
+
+fit3 <- lmer(meanpupil ~ imageseq + block + timesseen + (1|subID), data = model500) #(1|sub = intercept)
+
+anova(fit1,fit2,fit3)
+#anova measures difference for residual sum of squares (RSS) is a statistical technique used to measure the amount of variance in a data set that is not explained by the regression model
+#fit3 is better
+summary(fit3)
+
+#add interaction
+fit4 <- lmer(meanpupil ~ imagetype * subaccuracy * timesseen + (1|subID), data = model500) #(1|sub = intercept)
+summary(fit4)
+#nothing
+
+#750ms
+famtrials3 <- subset(f1, TIMECODE > 500)
+
+#participant (1-53), triplet presentation (1-24), image position (1-3), overall position in the stream (1-288), accuracy
+model750 <- ddply(famtrials3,.(subID,timesseen,imagetype,subaccuracy,accuracyV2),summarise,meanpupil=mean(PUPIL_CORRECTED_3,na.rm = TRUE)) 
+
+#create nested models to help you pick 
+fit11 <- lmer(meanpupil ~ imagetype + (1|subID), data = model750)
+
+#fit2 <- lmer(meanpupil ~ imagetype + factor(accuracy) + (1 |sub), data = model500) #can also include accuracy as continuous
+fit21 <- lmer(meanpupil ~ imagetype + subaccuracy + (1|subID), data = model750) 
+
+fit31 <- lmer(meanpupil ~ imagetype + subaccuracy + timesseen + (1|subID), data = model750) #(1|sub = intercept)
+
+anova(fit11,fit21,fit31)
+#comparing it to fit1
+#anova measures difference for residual sum of squares (RSS) is a statistical technique used to measure the amount of variance in a data set that is not explained by the regression model
+#including timesseen and accuracy helped a lot p = 0.01***
+
+summary(fit31) #image + accuracy + timesseen + (1 | sub)
+#within a trial, no pupil size increases for image seen
+#throughout the experiment, size increases timesseen p = 1.93e-07
+#no diff in accuracy :(
+
+#add interaction
+fit41 <- lmer(meanpupil ~ image * accuracy2 * timesseen + (1|sub), data = model750) #(1|sub = intercept)
+summary(fit41)
+#nothing
+
+```
