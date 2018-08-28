@@ -374,15 +374,15 @@ ggplot(h7,aes(x=TIMECODE,y=meanPUPILSs,color=factor(imagetype),fill=factor(image
 Oranges V2 Analyses: Accuracy
 ```{r}
 #ACCURACY
-#The average accuracy score on the test phase was 60% which is above chance (50%) (need to check if 60% is stat sig above 50%). 
+#The average accuracy score on the test phase was 53% which is only sligh chance (50%) (need to check if 60% is stat sig above 50%). 
 z2 <- ddply(OV2Orig,.(subID),summarise,accuracy=mean(subaccuracy,na.rm = TRUE)) 
 
 res <- t.test(z2$accuracy, mu = 0.5)
 res
-#t = 5.23, p-value < 0.001
+#t = 2.0497, p-value = 0.045
 
-#comparing accuracy for V1 and V2
-#accuracy on V2 is significantly worse
+#comparing accuracy for V1 and V2 (59% vs 53%)
+#accuracy on V2 is significantly worse p=0.01
 t.test(OV1accuracy$accuracy, z2$accuracy, var.equal = FALSE)
 ```
 
@@ -393,7 +393,7 @@ pupil change ~ accuracy + image + times seen
 famtrials3 <- subset(f1, TIMECODE < 502)
 
 #participant (1-53), triplet presentation (1-24), image position (1-3), overall position in the stream (1-288), accuracy
-model500 <- ddply(famtrials3,.(subID,timesseen,imagetype,subaccuracy,accuracyV2),summarise,meanpupil=mean(PUPIL_CORRECTED_3,na.rm = TRUE)) 
+model500 <- ddply(famtrials3,.(subID,timesseen,imagetype,subaccuracy),summarise,meanpupil=mean(PUPIL_CORRECTED_3,na.rm = TRUE)) 
 
 #create nested models to help you pick 
 fit1 <- lmer(meanpupil ~ imagetype + (1|subID), data = model500)
@@ -407,6 +407,9 @@ anova(fit1,fit2,fit3)
 #anova measures difference for residual sum of squares (RSS) is a statistical technique used to measure the amount of variance in a data set that is not explained by the regression model
 #nothing is significant
 summary(fit3)
+#result: #within a trial, pupil size increases for image type p = 0.009***
+#no familiarity effect size increases p = 0.0263*
+#no diff in accuracy :( p = 0.35073
 
 #add interaction
 fit4 <- lmer(meanpupil ~ imagetype * subaccuracy * timesseen + (1|subID), data = model500) #(1|sub = intercept)
@@ -417,7 +420,7 @@ summary(fit4)
 famtrials3 <- subset(f1, TIMECODE > 500)
 
 #participant (1-53), triplet presentation (1-24), image position (1-3), overall position in the stream (1-288), accuracy
-model750 <- ddply(famtrials3,.(subID,timesseen,imagetype,subaccuracy,accuracyV2),summarise,meanpupil=mean(PUPIL_CORRECTED_3,na.rm = TRUE)) 
+model750 <- ddply(famtrials3,.(subID,timesseen,imagetype,subaccuracy),summarise,meanpupil=mean(PUPIL_CORRECTED_3,na.rm = TRUE)) 
 
 #create nested models to help you pick 
 fit11 <- lmer(meanpupil ~ imagetype + (1|subID), data = model750)
@@ -433,12 +436,12 @@ anova(fit11,fit21,fit31)
 #including timesseen and accuracy helped a lot p = 0.01***
 
 summary(fit31) #image + accuracy + timesseen + (1 | sub)
-#within a trial, no pupil size increases for image seen
-#throughout the experiment, size increases timesseen p = 1.93e-07
+#within a trial, pupil size increased for image type p = 0.0097
+#familiarty effect p = 0.01
 #no diff in accuracy :(
 
 #add interaction
-fit41 <- lmer(meanpupil ~ image * accuracy2 * timesseen + (1|sub), data = model750) #(1|sub = intercept)
+fit41 <- lmer(meanpupil ~ imagetype * subaccuracy * timesseen + (1|subID), data = model750) #(1|sub = intercept)
 summary(fit41)
 #nothing
 
