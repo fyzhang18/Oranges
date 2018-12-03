@@ -12,6 +12,7 @@ library(ggplot2)
 library(zoo)
 library(reshape)
 library(plyr)
+library(dplyr)
 library(scales) 
 library(data.table)
 library(signal)
@@ -20,6 +21,8 @@ library(lme4)
 library(arm)
 library(RColorBrewer)
 library(lmerTest)
+library(boot)
+library(tidyr)
 
 #1. load data (master)
 OmixOrig = readRDS("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mix/Data/OMix.rds")
@@ -64,7 +67,7 @@ OV2Orig$X.1 <- NULL
 Setting color palettes
 ```{r}
 #colors
-color.t <- c("#FFCC00", "#ff9900","#FF6600")
+color.t <- c("#FFCC00", "#ff9900","#FF6600") 
 color.a <- c("#FFCC00", "#ff9900") 
 color.aa <- c("#bacfe3", "#2875be")  #blue
 color.ba <- c("#f15e6a", "#9c2b35")  #red
@@ -92,7 +95,7 @@ ggplot(OV1accuracy,aes(OV1accuracy$accuracy))+geom_histogram()+
   scale_x_continuous(label=percent,limits=c(0,1),breaks=seq(0,1,.1))+
   geom_vline(xintercept = c, linetype = "longdash", color="red",size = 1)+
   theme(plot.title = element_text(hjust = 0.5))
-  
+
 #timecourse
 a=c(500, 1750, 3000)
 b=c(1250,2500)
@@ -122,7 +125,6 @@ ggplot(b2,aes(x=TIMECODE2,y=meanPUPILSs,color=factor(image),fill=factor(image)))
   geom_ribbon(aes(ymin=meanPUPILSs-sePUPIL,ymax=meanPUPILSs+sePUPIL),alpha=0.4)+
   scale_y_continuous(labels=percent,limits=c(-.1,.1),breaks=seq(-.1,.1,0.02))+
   theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
-  ggtitle("Pupil change during triplet")+
   labs(x = "Time (ms)", y = "Pupil change from baseline (%)")+
   theme(plot.title = element_text(face="bold", size=20, hjust=0))+
   theme(axis.title = element_text(face="bold", size=20))+ 
@@ -133,7 +135,7 @@ ggplot(b2,aes(x=TIMECODE2,y=meanPUPILSs,color=factor(image),fill=factor(image)))
   scale_fill_manual(values=color.t, name="Image",breaks=c("1", "2","3"),labels=c("1", "2","3"))+
   guides(color=FALSE)+
   scale_colour_manual(values=color.t)+
-  theme(legend.position = "bottom")
+  theme(plot.title = element_text(hjust = 0.5))
 
 #triplet timecourse, for accuracy
 c1 <- ddply(a1,.(RECORDING_SESSION_LABEL,accuracy,TIMECODE3),summarise,meanPUPIL=mean(newpupil,na.rm = TRUE)) #collapse across subjects
@@ -156,7 +158,6 @@ ggplot(c2,aes(x=TIMECODE3,y=meanPUPILSs,color=factor(accuracy),fill=factor(accur
   scale_fill_brewer(palette="Set1",name="Accuracy",breaks=c("0", "1"),labels=c("below average", "above average"))+guides(color=FALSE)+
   scale_colour_brewer(palette="Set1")+
   theme(legend.position = "bottom")
-
 ```
 
 Oranges V1 Analyses: Accuracy
@@ -240,6 +241,51 @@ summary(fit41)
 
 ```
 
+Oranges V1: correlation pupil response and accuracy
+```{r}
+#entire trial
+foo <- group_by(OV1Orig, sub, accuracy2) %>%
+  summarise(
+    pupilavg=mean(PUPIL_CORRECTED,na.rm = TRUE)
+    )
+foo$trial <- 1
+
+#anticipatory period
+famtrials3 <- subset(OV1Orig, TIMECODE2 < 502) 
+foo2 <- group_by(famtrials3, sub, accuracy2) %>%
+  summarise(
+    pupilavg=mean(PUPIL_CORRECTED,na.rm = TRUE)
+    )
+foo2$trial <- 2
+#viewing period
+famtrials3 <- subset(OV1Orig, TIMECODE2 > 500)
+foo3 <- group_by(famtrials3, sub, accuracy2) %>%
+  summarise(
+    pupilavg=mean(PUPIL_CORRECTED,na.rm = TRUE)
+    )
+foo3$trial <- 3
+
+foofinal <- rbind(foo, foo2, foo3)
+
+split <- c(`1` = "Entire trial",`2` = "Anticipatory period",`3` = "Viewing period")
+
+ggplot(foofinal,aes(x=accuracy2,y=pupilavg))+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  geom_point()+
+  labs(x = "Accuracy (%)", y = "Pupil change from baseline (%)")+
+  theme(plot.title = element_text(face="bold", size=20, hjust=0))+
+  theme(axis.title = element_text(face="bold", size=20))+ 
+  theme(axis.text.x  = element_text(size=14),axis.text.y  = element_text(size=14))+
+  theme(legend.text=element_text(size=14),legend.title=element_text(size=14))+
+  theme(legend.position="none")+
+  scale_y_continuous(labels=percent)+
+  scale_x_continuous(labels=percent)+
+  facet_wrap(~trial,labeller = as_labeller(split))+
+  theme(strip.text = element_text(size=14))+
+  geom_smooth(method="lm", se = FALSE)
+```
+
 Oranges V2 Graphs: Timecourse 
 ```{r}
 f1 <- OV2Orig
@@ -251,7 +297,8 @@ c <- mean(z1$accuracy)
 length(which(z1$accuracy > 0.5))
 
 ggplot(z1,aes(z1$accuracy))+geom_histogram()+
-  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+ggtitle("Histogram of accuracy")+
+  theme_bw()+theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))+
+  ggtitle("Histogram of accuracy")+
   labs(x = "Accuracy (%)", y = "Number of participants")+
   theme(plot.title = element_text(face="bold", size=20, hjust=0))+
   theme(axis.title = element_text(face="bold", size=20))+ 
@@ -260,7 +307,7 @@ ggplot(z1,aes(z1$accuracy))+geom_histogram()+
   scale_x_continuous(label=percent,limits=c(0,1),breaks=seq(0,1,.1))+
   geom_vline(xintercept = c, linetype = "longdash", color="red",size = 1)+
   theme(plot.title = element_text(hjust = 0.5))+
-  scale_y_continuous(limits=c(0,15),breaks=seq(0,15,1))
+  scale_y_continuous(limits=c(0,15),breaks=seq(0,15,2))
 
 #TIMECOURSE PLOTS
 g1 <- ddply(f1,.(RECORDING_SESSION_LABEL,TIMECODE,imagetype),summarise,meanPUPIL=mean(PUPIL_CORRECTED_3,na.rm = TRUE)) #collapse across trials
@@ -280,14 +327,14 @@ ggplot(g2,aes(x=TIMECODE,y=meanPUPILSs,color=factor(imagetype),fill=factor(image
   theme(axis.title = element_text(face="bold", size=20))+ 
   theme(axis.text.x  = element_text(size=20),axis.text.y  = element_text(size=20))+
   theme(legend.text=element_text(size=20),legend.title=element_text(size=20))+
-  scale_fill_manual(values=color.t,name="Image",breaks=c("0", "1","2"),labels=c("0", "1","2"))+
+  scale_fill_manual(values=color.aa,name="Image",breaks=c("0", "1","2"),labels=c("0", "1","2"))+
   geom_vline(xintercept = 500,linetype = "longdash")+
-  scale_color_manual(values=color.t)+
+  scale_color_manual(values=color.aa)+
   theme(legend.position = "bottom")
 
 ```
 
-Oranges V2 Graphs: Timecourse with accuracy
+Oranges V2 Graphs: Timecourse with accuracy (but accuracy isn't significant so we can skip it)
 ```{r}
 #group accuracy as above or below chance 
 f1 <- OV2Orig
@@ -374,7 +421,7 @@ ggplot(h7,aes(x=TIMECODE,y=meanPUPILSs,color=factor(imagetype),fill=factor(image
 Oranges V2 Analyses: Accuracy
 ```{r}
 #ACCURACY
-#The average accuracy score on the test phase was 53% which is only sligh chance (50%) (need to check if 60% is stat sig above 50%). 
+#The average accuracy score on the test phase was 53% which is only sligh chance (50%)
 z2 <- ddply(OV2Orig,.(subID),summarise,accuracy=mean(subaccuracy,na.rm = TRUE)) 
 
 res <- t.test(z2$accuracy, mu = 0.5)
@@ -407,8 +454,8 @@ anova(fit1,fit2,fit3)
 #anova measures difference for residual sum of squares (RSS) is a statistical technique used to measure the amount of variance in a data set that is not explained by the regression model
 #nothing is significant
 summary(fit3)
-#result: #within a trial, pupil size increases for image type p = 0.009***
-#no familiarity effect size increases p = 0.0263*
+#result: #within a trial, pupil size increases for image type p = 0.01**
+#no familiarity effect size increases p = 0.79256
 #no diff in accuracy :( p = 0.35073
 
 #add interaction
@@ -436,8 +483,8 @@ anova(fit11,fit21,fit31)
 #including timesseen and accuracy helped a lot p = 0.01***
 
 summary(fit31) #image + accuracy + timesseen + (1 | sub)
-#within a trial, pupil size increased for image type p = 0.0097
-#familiarty effect p = 0.01
+#within a trial, pupil size increased for image type p = 0.0097 **
+#familiarty effect p = 0.013 *
 #no diff in accuracy :(
 
 #add interaction
@@ -542,10 +589,11 @@ ggplot(coo5,aes(x=TIMECODE2,y=meanPUPIL,color=factor(block),fill=factor(block)))
 ```
 
 Oranges Mix Analyses: Regression
-pupil change ~ image + times seen + block
+pupil change ~ image + times seen 
+anticipatory period: 500ms
 ```{r}
-#anticipatory period: 500ms
-famtrials3 <- subset(orig2, TIMECODE < 502)
+#triplet block
+famtrials3 <- subset(Omix.Trip, TIMECODE < 502)
 
 #participant (1-53), timesseen (1-24), image position (1-3), block (0,1), accuracy
 model500 <- ddply(famtrials3,.(subID,timesseen,imageseq,block),summarise,meanpupil=mean(PUPIL_CORRECTED_2,na.rm = TRUE)) 
@@ -555,46 +603,138 @@ model500$block <- model500$block-1
 fit1 <- lmer(meanpupil ~ imageseq + (1|subID), data = model500)
 
 #fit2 <- lmer(meanpupil ~ image + factor(accuracy) + (1 |subID), data = model500) #can also include accuracy as continuous
-fit2 <- lmer(meanpupil ~ imageseq + block + (1|subID), data = model500) 
 
-fit3 <- lmer(meanpupil ~ imageseq + block + timesseen + (1|subID), data = model500) #(1|sub = intercept)
+fit3 <- lmer(meanpupil ~ imageseq + timesseen + (1|subID), data = model500) #(1|sub = intercept)
 
-anova(fit1,fit2,fit3)
+anova(fit1,fit3)
 #anova measures difference for residual sum of squares (RSS) is a statistical technique used to measure the amount of variance in a data set that is not explained by the regression model
 #fit3 is better
 summary(fit3)
+#Result: image seq is significant (B= 0.005316, p = 0.0002) and familiarity effect (B=0.0006058, p=0.0028)
 
 #add interaction
-fit4 <- lmer(meanpupil ~ imagetype * subaccuracy * timesseen + (1|subID), data = model500) #(1|sub = intercept)
+fit4 <- lmer(meanpupil ~ imageseq * timesseen + (1|subID), data = model500) #(1|sub = intercept)
 summary(fit4)
-#nothing
+#sig interaction for imageseq:timessseen p = 0.0375
 
-#750ms
-famtrials3 <- subset(f1, TIMECODE > 500)
+#random block
+famtrials3 <- subset(Omix.Rand, TIMECODE < 502)
 
-#participant (1-53), triplet presentation (1-24), image position (1-3), overall position in the stream (1-288), accuracy
-model750 <- ddply(famtrials3,.(subID,timesseen,imagetype,subaccuracy,accuracyV2),summarise,meanpupil=mean(PUPIL_CORRECTED_3,na.rm = TRUE)) 
+#fill in timesseen
+famtrials3$timesseen[famtrials3$TRIAL_INDEX < 253] <- 1
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 252 & famtrials3$TRIAL_INDEX < 265] <- 2
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 264 & famtrials3$TRIAL_INDEX < 277] <- 3
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 276 & famtrials3$TRIAL_INDEX < 289] <- 4
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 288 & famtrials3$TRIAL_INDEX < 301] <- 5
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 300 & famtrials3$TRIAL_INDEX < 313] <- 6
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 312 & famtrials3$TRIAL_INDEX < 325] <- 7
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 324 & famtrials3$TRIAL_INDEX < 337] <- 8
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 336 & famtrials3$TRIAL_INDEX < 349] <- 9
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 348 & famtrials3$TRIAL_INDEX < 361] <- 10
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 360 & famtrials3$TRIAL_INDEX < 373] <- 11
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 372 & famtrials3$TRIAL_INDEX < 385] <- 12
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 384 & famtrials3$TRIAL_INDEX < 397] <- 13
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 396 & famtrials3$TRIAL_INDEX < 409] <- 14
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 408 & famtrials3$TRIAL_INDEX < 421] <- 15
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 420 & famtrials3$TRIAL_INDEX < 433] <- 16
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 432 & famtrials3$TRIAL_INDEX < 445] <- 17
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 444 & famtrials3$TRIAL_INDEX < 457] <- 18
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 456 & famtrials3$TRIAL_INDEX < 469] <- 19
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 468] <- 20
+
+#participant (1-53), timesseen (1-24), image position (1-3), block (0,1), accuracy
+model500 <- ddply(famtrials3,.(subID,timesseen,imageseq,block),summarise,meanpupil=mean(PUPIL_CORRECTED_2,na.rm = TRUE)) 
 
 #create nested models to help you pick 
-fit11 <- lmer(meanpupil ~ imagetype + (1|subID), data = model750)
+fit1 <- lmer(meanpupil ~ imageseq + (1|subID), data = model500)
 
-#fit2 <- lmer(meanpupil ~ imagetype + factor(accuracy) + (1 |sub), data = model500) #can also include accuracy as continuous
-fit21 <- lmer(meanpupil ~ imagetype + subaccuracy + (1|subID), data = model750) 
+#fit2 <- lmer(meanpupil ~ image + factor(accuracy) + (1 |subID), data = model500) #can also include accuracy as continuous
 
-fit31 <- lmer(meanpupil ~ imagetype + subaccuracy + timesseen + (1|subID), data = model750) #(1|sub = intercept)
+fit3 <- lmer(meanpupil ~ imageseq + timesseen + (1|subID), data = model500) #(1|sub = intercept)
 
-anova(fit11,fit21,fit31)
-#comparing it to fit1
+anova(fit1,fit3)
 #anova measures difference for residual sum of squares (RSS) is a statistical technique used to measure the amount of variance in a data set that is not explained by the regression model
-#including timesseen and accuracy helped a lot p = 0.01***
-
-summary(fit31) #image + accuracy + timesseen + (1 | sub)
-#within a trial, no pupil size increases for image seen
-#throughout the experiment, size increases timesseen p = 1.93e-07
-#no diff in accuracy :(
+#fit1 and fit3 are the same
+summary(fit3)
+#image seq is significant (B= 0.009396, p = 0.0176) even for random it gets larger which goes against our hypothesis
 
 #add interaction
-fit41 <- lmer(meanpupil ~ image * accuracy2 * timesseen + (1|sub), data = model750) #(1|sub = intercept)
+fit4 <- lmer(meanpupil ~ imageseq * timesseen + (1|subID), data = model500) #(1|sub = intercept)
+summary(fit4)
+#nothing
+```
+
+Oranges Mix Analyses: Regression
+pupil change ~ image + times seen 
+viewing period: 750ms
+```{r}
+#triplet block
+famtrials3 <- subset(Omix.Trip, TIMECODE > 500)
+
+#participant (1-53), triplet presentation (1-24), image position (1-3)
+model750 <- ddply(famtrials3,.(subID,timesseen,imageseq),summarise,meanpupil=mean(PUPIL_CORRECTED_2,na.rm = TRUE)) 
+
+#create nested models to help you pick 
+fit11 <- lmer(meanpupil ~ imageseq + (1|subID), data = model750)
+
+fit31 <- lmer(meanpupil ~ imageseq + timesseen + (1|subID), data = model750) #(1|sub = intercept)
+
+anova(fit11,fit31)
+#comparing it to fit1
+#anova measures difference for residual sum of squares (RSS) is a statistical technique used to measure the amount of variance in a data set that is not explained by the regression model
+#fit31 is better
+
+summary(fit31) 
+#Result: familiarity effect size increases timesseen (B=0.0007522, p = 0.00126)
+
+#add interaction
+fit41 <- lmer(meanpupil ~ imageseq * timesseen + (1|subID), data = model750) #(1|sub = intercept)
+summary(fit41)
+#sig interaction for imageseq:timessseen p = 0.04
+
+#random block
+famtrials3 <- subset(Omix.Rand, TIMECODE > 500)
+
+#fill in timesseen
+famtrials3$timesseen[famtrials3$TRIAL_INDEX < 253] <- 1
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 252 & famtrials3$TRIAL_INDEX < 265] <- 2
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 264 & famtrials3$TRIAL_INDEX < 277] <- 3
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 276 & famtrials3$TRIAL_INDEX < 289] <- 4
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 288 & famtrials3$TRIAL_INDEX < 301] <- 5
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 300 & famtrials3$TRIAL_INDEX < 313] <- 6
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 312 & famtrials3$TRIAL_INDEX < 325] <- 7
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 324 & famtrials3$TRIAL_INDEX < 337] <- 8
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 336 & famtrials3$TRIAL_INDEX < 349] <- 9
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 348 & famtrials3$TRIAL_INDEX < 361] <- 10
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 360 & famtrials3$TRIAL_INDEX < 373] <- 11
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 372 & famtrials3$TRIAL_INDEX < 385] <- 12
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 384 & famtrials3$TRIAL_INDEX < 397] <- 13
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 396 & famtrials3$TRIAL_INDEX < 409] <- 14
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 408 & famtrials3$TRIAL_INDEX < 421] <- 15
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 420 & famtrials3$TRIAL_INDEX < 433] <- 16
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 432 & famtrials3$TRIAL_INDEX < 445] <- 17
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 444 & famtrials3$TRIAL_INDEX < 457] <- 18
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 456 & famtrials3$TRIAL_INDEX < 469] <- 19
+famtrials3$timesseen[famtrials3$TRIAL_INDEX > 468] <- 20
+
+#participant (1-53), triplet presentation (1-24), image position (1-3)
+model750 <- ddply(famtrials3,.(subID,timesseen,imageseq),summarise,meanpupil=mean(PUPIL_CORRECTED_2,na.rm = TRUE)) 
+
+#create nested models to help you pick 
+fit11 <- lmer(meanpupil ~ imageseq + (1|subID), data = model750)
+
+fit31 <- lmer(meanpupil ~ imageseq + timesseen + (1|subID), data = model750) #(1|sub = intercept)
+
+anova(fit11,fit31)
+#comparing it to fit1
+#anova measures difference for residual sum of squares (RSS) is a statistical technique used to measure the amount of variance in a data set that is not explained by the regression model
+#fit11 and fit31 are the same
+
+summary(fit31) 
+#Result: nothing
+
+#add interaction
+fit41 <- lmer(meanpupil ~ imageseq * timesseen + (1|subID), data = model750) #(1|sub = intercept)
 summary(fit41)
 #nothing
 

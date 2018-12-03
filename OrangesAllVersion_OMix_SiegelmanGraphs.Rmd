@@ -1,0 +1,1036 @@
+---
+title: "Online measure of SL for O Mix"
+author: "Felicia Zhang"
+date: '2018-11-24'
+output: html_document
+---
+```{r setup, include=FALSE}
+library(ggplot2) 
+library(zoo)
+library(reshape)
+library(plyr)
+library(dplyr)
+library(scales) 
+library(data.table)
+library(signal)
+library(matrixStats)
+library(lme4)
+library(arm)
+library(RColorBrewer)
+library(lmerTest)
+library(boot)
+library(tidyr)
+
+#1. load data (master)
+OmixOrig = readRDS("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mix/Data/OMix.rds")
+Omix.Trip = readRDS("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mix/Data/Omix_trip_zscore.rds")
+Omix.Rand = readRDS("/Volumes/emberson/ResearchProjects/Pupillometry/Oranges_Mix/Data/Omix_rand_zscore.rds")
+
+#O_V1:
+#pupil corrected = pupil change from baseline
+#image = triplet position (1, 2 or 3)
+#newtime = time for each image in triplet (0-1250ms)
+#triplet = which triplet it is (1, 2, 3 or 4)
+#sub = faster way to index subjects
+#triplet_trialindex = trial number based on triplet (range 1 - 96)
+#timesseen = times seen the triplet (range 1- 24)
+#accuracy = coding if subject scored above or below the average accuracy (0 = below, 1 = above)
+#newtime2 = time for each triplet (0-3750ms)
+#newtime3 = recode time: 500ms, and then 750ms (0-1250ms)
+#timecode2 = recode time: 500ms, and then 750ms (0-1250ms)
+#timecode3 = time for each triplet (0-3750ms)
+
+#O_V2:
+#pupil corrected = baseline is each image
+#pupil corrected 2 = baseline first image of triplet
+#pupil corrected 3 = baseline using predicting image of pair
+#phase = 0 = familiarzation, 1 = test
+#imagetype = first, second or third image in triplet
+#timesseen = times seen the triplet (range 1- 20)
+#trialaccuracy = if test phase trial was right or wrong
+
+#OMix:
+#pupil corrected = baseline is each image
+#pupil corrected 2 = baseline first image of triplet
+#block = 1 = triplet, 2 = random
+#imageseq = first, second or third image in triplet
+#timesseen = times seen the triplet (range 1- 20)
+#TRIP_TRIAL_INDEX = correct triplet trial number
+#TIMECODE2 = correct 0 - 3754ms
+```
+
+O Mix: Compare online measure of SL between conditions (anticipatory period)
+2 and 3
+```{r}
+# Get data from random block
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX < 253] <- 1
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 252 & Omix.Rand$TRIAL_INDEX < 265] <- 2
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 264 & Omix.Rand$TRIAL_INDEX < 277] <- 3
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 276 & Omix.Rand$TRIAL_INDEX < 289] <- 4
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 288 & Omix.Rand$TRIAL_INDEX < 301] <- 5
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 300 & Omix.Rand$TRIAL_INDEX < 313] <- 6
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 312 & Omix.Rand$TRIAL_INDEX < 325] <- 7
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 324 & Omix.Rand$TRIAL_INDEX < 337] <- 8
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 336 & Omix.Rand$TRIAL_INDEX < 349] <- 9
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 348 & Omix.Rand$TRIAL_INDEX < 361] <- 10
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 360 & Omix.Rand$TRIAL_INDEX < 373] <- 11
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 372 & Omix.Rand$TRIAL_INDEX < 385] <- 12
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 384 & Omix.Rand$TRIAL_INDEX < 397] <- 13
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 396 & Omix.Rand$TRIAL_INDEX < 409] <- 14
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 408 & Omix.Rand$TRIAL_INDEX < 421] <- 15
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 420 & Omix.Rand$TRIAL_INDEX < 433] <- 16
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 432 & Omix.Rand$TRIAL_INDEX < 445] <- 17
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 444 & Omix.Rand$TRIAL_INDEX < 457] <- 18
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 456 & Omix.Rand$TRIAL_INDEX < 469] <- 19
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 468] <- 20
+
+#ANTICIPATORY PERIOD
+ant4 <- subset(Omix.Rand, TIMECODE < 502)
+
+#online measure of SL = pupil change for 1st position - mean(pupil change for 2nd and 3rd position)
+poo <- group_by(ant4, subID, TRIAL_INDEX, imageseq, timesseen) %>%
+  summarise(
+    pupilavg = mean(PUPIL_CORRECTED_2, na.rm = TRUE)
+  )
+
+poo$TRIAL_INDEX_2 <- poo$TRIAL_INDEX - 240
+
+# add in triplet trial index
+poo$triplet_trialindex <- 0
+
+subs <- unique(poo$subID)
+for (j in 1:length(subs)) {
+for (i in 1:80) {
+  if (length(which(poo$TRIAL_INDEX_2[poo$subID==subs[j]]==(i*3)-1)) > 0 & length(which(poo$TRIAL_INDEX_2[poo$subID==subs[j]]==(i*3)-2)) > 0 & length(which(poo$TRIAL_INDEX_2[poo$subID==subs[j]]==(i*3))) > 0) {
+    poo$triplet_trialindex[(poo$TRIAL_INDEX_2 ==(i*3)-2 | poo$TRIAL_INDEX_2 ==(i*3)-1 | poo$TRIAL_INDEX_2 ==(i*3)) & poo$subID==subs[j]] <- i
+    
+}}}
+
+poo <- subset(poo, triplet_trialindex !=0)
+
+# use both image 2 and 3
+poo2 <- group_by(poo, subID, triplet_trialindex, timesseen) %>%
+  summarise(
+    image1 = pupilavg[which(imageseq==1)],
+    image23 = mean(pupilavg[which(imageseq!=1)])
+  )
+
+poo2$onlineSL <- poo2$image1 - poo2$image23
+
+poo3 <- group_by(poo2, subID, timesseen) %>%
+  summarise(
+    onlineSL = mean(onlineSL, na.rm = TRUE)
+  )
+
+poo4 <- group_by(poo3, timesseen) %>%
+  summarise(
+    meanOnlineSL = mean(onlineSL, na.rm = TRUE),
+    seOnlineSL=sd(onlineSL, na.rm = TRUE)/sqrt(length(onlineSL))
+  )
+
+poo4$condition <- "random"
+
+#### GET DATA FROM TRIPLET BLOCK
+
+ant3 <- subset(Omix.Trip, TIMECODE < 502)
+
+#online measure of SL = pupil change for 1st position - mean(pupil change for 2nd and 3rd position)
+boo <- group_by(ant3, subID, TRIAL_INDEX, imageseq, timesseen) %>%
+  summarise(
+    pupilavg = mean(PUPIL_CORRECTED_2, na.rm = TRUE)
+  )
+
+# add in triplet trial index
+boo$triplet_trialindex <- 0
+
+subs <- unique(boo$subID)
+for (j in 1:length(subs)) {
+for (i in 1:80) {
+  if (length(which(boo$TRIAL_INDEX[boo$subID==subs[j]]==(i*3)-1)) > 0 & length(which(boo$TRIAL_INDEX[boo$subID==subs[j]]==(i*3)-2)) > 0 & length(which(boo$TRIAL_INDEX[boo$subID==subs[j]]==(i*3))) > 0) {
+    boo$triplet_trialindex[(boo$TRIAL_INDEX ==(i*3)-2 | boo$TRIAL_INDEX ==(i*3)-1 | boo$TRIAL_INDEX ==(i*3)) & boo$subID==subs[j]] <- i
+    
+}}}
+
+boo <- subset(boo, triplet_trialindex !=0)
+
+# use mean of both image 2 and 3
+boo2 <- group_by(boo, subID, triplet_trialindex, timesseen) %>%
+  summarise(
+    image1 = pupilavg[which(imageseq==1)],
+    image23 = mean(pupilavg[which(imageseq!=1)])
+  )
+
+boo2$onlineSL <- boo2$image1 - boo2$image23
+
+boo3 <- group_by(boo2, subID, timesseen) %>%
+  summarise(
+    onlineSL = mean(onlineSL, na.rm = TRUE)
+  )
+
+boo4 <- group_by(boo3, timesseen) %>%
+  summarise(
+    meanOnlineSL = mean(onlineSL, na.rm = TRUE),
+    seOnlineSL=sd(onlineSL, na.rm = TRUE)/sqrt(length(onlineSL))
+  )
+
+boo4$condition <- "triplet"
+
+#identify outliers
+goo <- rbind(poo4, boo4)
+ggplot(goo, aes(x=condition,y=meanOnlineSL,color=factor(condition)))+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  geom_boxplot()+
+  ggtitle("Anticipatory period (2+3)")+
+  labs(x = "Condition", y = "Online measure of SL")+
+  theme(plot.title = element_text(face="bold", size=16, hjust=0.5))+
+  theme(axis.title = element_text(face="bold", size=16))+ 
+  theme(axis.text.x  = element_text(size=16),axis.text.y  = element_text(size=16))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+
+  theme(legend.position="top")
+
+#Fig 3 from the paper = plot online measure of SL for each block
+ggplot(goo,aes(x=timesseen,y=meanOnlineSL,color=factor(condition),fill=factor(condition)))+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  geom_point(size = 5)+
+  ggtitle("Anticipatory period (2+3)")+
+  labs(x = "Number of times seen", y = "Online measure of SL")+
+  theme(plot.title = element_text(face="bold", size=16, hjust=0.5))+
+  theme(axis.title = element_text(face="bold", size=16))+ 
+  theme(axis.text.x  = element_text(size=16),axis.text.y  = element_text(size=16))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+
+  theme(legend.position="top")+
+  scale_x_continuous(limits=c(1,20),breaks=seq(1,20,1))+
+  scale_y_continuous(limits=c(-.1,.05),breaks=seq(-.1,.05,.01))+
+  geom_smooth(method="lm", se = FALSE)
+  
+
+cor.test(goo$timesseen[goo$condition=="random"], goo$meanOnlineSL[goo$condition=="random"])
+cor.test(goo$timesseen[goo$condition=="triplet"], goo$meanOnlineSL[goo$condition=="triplet"])
+
+# compare slope 
+goo$condition <- as.factor(goo$condition)
+model1 <- lm(meanOnlineSL ~ timesseen*condition, data=goo)
+summary(model1)
+```
+
+O Mix: Compare online measure of SL between conditions (anticipatory period)
+2 
+```{r}
+# Get data from random block
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX < 253] <- 1
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 252 & Omix.Rand$TRIAL_INDEX < 265] <- 2
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 264 & Omix.Rand$TRIAL_INDEX < 277] <- 3
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 276 & Omix.Rand$TRIAL_INDEX < 289] <- 4
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 288 & Omix.Rand$TRIAL_INDEX < 301] <- 5
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 300 & Omix.Rand$TRIAL_INDEX < 313] <- 6
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 312 & Omix.Rand$TRIAL_INDEX < 325] <- 7
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 324 & Omix.Rand$TRIAL_INDEX < 337] <- 8
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 336 & Omix.Rand$TRIAL_INDEX < 349] <- 9
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 348 & Omix.Rand$TRIAL_INDEX < 361] <- 10
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 360 & Omix.Rand$TRIAL_INDEX < 373] <- 11
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 372 & Omix.Rand$TRIAL_INDEX < 385] <- 12
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 384 & Omix.Rand$TRIAL_INDEX < 397] <- 13
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 396 & Omix.Rand$TRIAL_INDEX < 409] <- 14
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 408 & Omix.Rand$TRIAL_INDEX < 421] <- 15
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 420 & Omix.Rand$TRIAL_INDEX < 433] <- 16
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 432 & Omix.Rand$TRIAL_INDEX < 445] <- 17
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 444 & Omix.Rand$TRIAL_INDEX < 457] <- 18
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 456 & Omix.Rand$TRIAL_INDEX < 469] <- 19
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 468] <- 20
+
+#ANTICIPATORY PERIOD
+ant4 <- subset(Omix.Rand, TIMECODE < 502)
+
+#online measure of SL = pupil change for 1st position - mean(pupil change for 2nd and 3rd position)
+poo <- group_by(ant4, subID, TRIAL_INDEX, imageseq, timesseen) %>%
+  summarise(
+    pupilavg = mean(PUPIL_CORRECTED_2, na.rm = TRUE)
+  )
+
+poo$TRIAL_INDEX_2 <- poo$TRIAL_INDEX - 240
+
+# add in triplet trial index
+poo$triplet_trialindex <- 0
+
+subs <- unique(poo$subID)
+for (j in 1:length(subs)) {
+for (i in 1:80) {
+  if (length(which(poo$TRIAL_INDEX_2[poo$subID==subs[j]]==(i*3)-1)) > 0 & length(which(poo$TRIAL_INDEX_2[poo$subID==subs[j]]==(i*3)-2)) > 0 & length(which(poo$TRIAL_INDEX_2[poo$subID==subs[j]]==(i*3))) > 0) {
+    poo$triplet_trialindex[(poo$TRIAL_INDEX_2 ==(i*3)-2 | poo$TRIAL_INDEX_2 ==(i*3)-1 | poo$TRIAL_INDEX_2 ==(i*3)) & poo$subID==subs[j]] <- i
+    
+}}}
+
+poo <- subset(poo, triplet_trialindex !=0)
+
+# just 2
+poo2 <- group_by(poo, subID, triplet_trialindex, timesseen) %>%
+  summarise(
+    image1 = pupilavg[which(imageseq==1)],
+    image23 = pupilavg[which(imageseq==2)]
+  )
+
+poo2$onlineSL <- poo2$image1 - poo2$image23
+
+poo3 <- group_by(poo2, subID, timesseen) %>%
+  summarise(
+    onlineSL = mean(onlineSL, na.rm = TRUE)
+  )
+
+poo4 <- group_by(poo3, timesseen) %>%
+  summarise(
+    meanOnlineSL = mean(onlineSL, na.rm = TRUE),
+    seOnlineSL=sd(onlineSL, na.rm = TRUE)/sqrt(length(onlineSL))
+  )
+
+poo4$condition <- "random"
+
+#### GET DATA FROM TRIPLET BLOCK
+
+ant3 <- subset(Omix.Trip, TIMECODE < 502)
+
+#online measure of SL = pupil change for 1st position - mean(pupil change for 2nd and 3rd position)
+boo <- group_by(ant3, subID, TRIAL_INDEX, imageseq, timesseen) %>%
+  summarise(
+    pupilavg = mean(PUPIL_CORRECTED_2, na.rm = TRUE)
+  )
+
+# add in triplet trial index
+boo$triplet_trialindex <- 0
+
+subs <- unique(boo$subID)
+for (j in 1:length(subs)) {
+for (i in 1:80) {
+  if (length(which(boo$TRIAL_INDEX[boo$subID==subs[j]]==(i*3)-1)) > 0 & length(which(boo$TRIAL_INDEX[boo$subID==subs[j]]==(i*3)-2)) > 0 & length(which(boo$TRIAL_INDEX[boo$subID==subs[j]]==(i*3))) > 0) {
+    boo$triplet_trialindex[(boo$TRIAL_INDEX ==(i*3)-2 | boo$TRIAL_INDEX ==(i*3)-1 | boo$TRIAL_INDEX ==(i*3)) & boo$subID==subs[j]] <- i
+    
+}}}
+
+boo <- subset(boo, triplet_trialindex !=0)
+
+# just 2
+boo2 <- group_by(boo, subID, triplet_trialindex, timesseen) %>%
+  summarise(
+    image1 = pupilavg[which(imageseq==1)],
+    image23 = pupilavg[which(imageseq==2)]
+  )
+
+boo2$onlineSL <- boo2$image1 - boo2$image23
+
+boo3 <- group_by(boo2, subID, timesseen) %>%
+  summarise(
+    onlineSL = mean(onlineSL, na.rm = TRUE)
+  )
+
+boo4 <- group_by(boo3, timesseen) %>%
+  summarise(
+    meanOnlineSL = mean(onlineSL, na.rm = TRUE),
+    seOnlineSL=sd(onlineSL, na.rm = TRUE)/sqrt(length(onlineSL))
+  )
+
+boo4$condition <- "triplet"
+
+goo <- rbind(poo4, boo4)
+
+#identify outliers
+goo <- rbind(poo4, boo4)
+ggplot(goo, aes(x=condition,y=meanOnlineSL,color=factor(condition)))+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  geom_boxplot()+
+  ggtitle("Anticipatory period (2)")+
+  labs(x = "Condition", y = "Online measure of SL")+
+  theme(plot.title = element_text(face="bold", size=16, hjust=0.5))+
+  theme(axis.title = element_text(face="bold", size=16))+ 
+  theme(axis.text.x  = element_text(size=16),axis.text.y  = element_text(size=16))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+
+  theme(legend.position="top")
+
+#Fig 3 from the paper = plot online measure of SL for each block
+ggplot(goo,aes(x=timesseen,y=meanOnlineSL,color=factor(condition),fill=factor(condition)))+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  geom_point(size = 5)+
+  ggtitle("Anticipatory period (2)")+
+  labs(x = "Number of times seen", y = "Online measure of SL")+
+  theme(plot.title = element_text(face="bold", size=16, hjust=0.5))+
+  theme(axis.title = element_text(face="bold", size=16))+ 
+  theme(axis.text.x  = element_text(size=16),axis.text.y  = element_text(size=16))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+
+  theme(legend.position="top")+
+  scale_x_continuous(limits=c(1,20),breaks=seq(1,20,1))+
+  scale_y_continuous(limits=c(-.1,.05),breaks=seq(-.1,.05,.01))+
+  geom_smooth(method="lm", se = FALSE)
+  
+
+cor.test(goo$timesseen[goo$condition=="random"], goo$meanOnlineSL[goo$condition=="random"])
+cor.test(goo$timesseen[goo$condition=="triplet"], goo$meanOnlineSL[goo$condition=="triplet"])
+
+# compare slope 
+goo$condition <- as.factor(goo$condition)
+model1 <- lm(meanOnlineSL ~ timesseen*condition, data=goo)
+summary(model1)
+```
+
+O Mix: Compare online measure of SL between conditions (anticipatory period)
+3
+```{r}
+# Get data from random block
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX < 253] <- 1
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 252 & Omix.Rand$TRIAL_INDEX < 265] <- 2
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 264 & Omix.Rand$TRIAL_INDEX < 277] <- 3
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 276 & Omix.Rand$TRIAL_INDEX < 289] <- 4
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 288 & Omix.Rand$TRIAL_INDEX < 301] <- 5
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 300 & Omix.Rand$TRIAL_INDEX < 313] <- 6
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 312 & Omix.Rand$TRIAL_INDEX < 325] <- 7
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 324 & Omix.Rand$TRIAL_INDEX < 337] <- 8
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 336 & Omix.Rand$TRIAL_INDEX < 349] <- 9
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 348 & Omix.Rand$TRIAL_INDEX < 361] <- 10
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 360 & Omix.Rand$TRIAL_INDEX < 373] <- 11
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 372 & Omix.Rand$TRIAL_INDEX < 385] <- 12
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 384 & Omix.Rand$TRIAL_INDEX < 397] <- 13
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 396 & Omix.Rand$TRIAL_INDEX < 409] <- 14
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 408 & Omix.Rand$TRIAL_INDEX < 421] <- 15
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 420 & Omix.Rand$TRIAL_INDEX < 433] <- 16
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 432 & Omix.Rand$TRIAL_INDEX < 445] <- 17
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 444 & Omix.Rand$TRIAL_INDEX < 457] <- 18
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 456 & Omix.Rand$TRIAL_INDEX < 469] <- 19
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 468] <- 20
+
+#ANTICIPATORY PERIOD
+ant4 <- subset(Omix.Rand, TIMECODE < 502)
+
+#online measure of SL = pupil change for 1st position - mean(pupil change for 2nd and 3rd position)
+poo <- group_by(ant4, subID, TRIAL_INDEX, imageseq, timesseen) %>%
+  summarise(
+    pupilavg = mean(PUPIL_CORRECTED_2, na.rm = TRUE)
+  )
+
+poo$TRIAL_INDEX_2 <- poo$TRIAL_INDEX - 240
+
+# add in triplet trial index
+poo$triplet_trialindex <- 0
+
+subs <- unique(poo$subID)
+for (j in 1:length(subs)) {
+for (i in 1:80) {
+  if (length(which(poo$TRIAL_INDEX_2[poo$subID==subs[j]]==(i*3)-1)) > 0 & length(which(poo$TRIAL_INDEX_2[poo$subID==subs[j]]==(i*3)-2)) > 0 & length(which(poo$TRIAL_INDEX_2[poo$subID==subs[j]]==(i*3))) > 0) {
+    poo$triplet_trialindex[(poo$TRIAL_INDEX_2 ==(i*3)-2 | poo$TRIAL_INDEX_2 ==(i*3)-1 | poo$TRIAL_INDEX_2 ==(i*3)) & poo$subID==subs[j]] <- i
+    
+}}}
+
+poo <- subset(poo, triplet_trialindex !=0)
+
+# just 3
+poo2 <- group_by(poo, subID, triplet_trialindex, timesseen) %>%
+  summarise(
+    image1 = pupilavg[which(imageseq==1)],
+    image23 = pupilavg[which(imageseq==3)]
+  )
+
+poo2$onlineSL <- poo2$image1 - poo2$image23
+
+poo3 <- group_by(poo2, subID, timesseen) %>%
+  summarise(
+    onlineSL = mean(onlineSL, na.rm = TRUE)
+  )
+
+poo4 <- group_by(poo3, timesseen) %>%
+  summarise(
+    meanOnlineSL = mean(onlineSL, na.rm = TRUE),
+    seOnlineSL=sd(onlineSL, na.rm = TRUE)/sqrt(length(onlineSL))
+  )
+
+poo4$condition <- "random"
+
+#### GET DATA FROM TRIPLET BLOCK
+
+ant3 <- subset(Omix.Trip, TIMECODE < 502)
+
+#online measure of SL = pupil change for 1st position - mean(pupil change for 2nd and 3rd position)
+boo <- group_by(ant3, subID, TRIAL_INDEX, imageseq, timesseen) %>%
+  summarise(
+    pupilavg = mean(PUPIL_CORRECTED_2, na.rm = TRUE)
+  )
+
+# add in triplet trial index
+boo$triplet_trialindex <- 0
+
+subs <- unique(boo$subID)
+for (j in 1:length(subs)) {
+for (i in 1:80) {
+  if (length(which(boo$TRIAL_INDEX[boo$subID==subs[j]]==(i*3)-1)) > 0 & length(which(boo$TRIAL_INDEX[boo$subID==subs[j]]==(i*3)-2)) > 0 & length(which(boo$TRIAL_INDEX[boo$subID==subs[j]]==(i*3))) > 0) {
+    boo$triplet_trialindex[(boo$TRIAL_INDEX ==(i*3)-2 | boo$TRIAL_INDEX ==(i*3)-1 | boo$TRIAL_INDEX ==(i*3)) & boo$subID==subs[j]] <- i
+    
+}}}
+
+boo <- subset(boo, triplet_trialindex !=0)
+
+# just 3
+boo2 <- group_by(boo, subID, triplet_trialindex, timesseen) %>%
+  summarise(
+    image1 = pupilavg[which(imageseq==1)],
+    image23 = pupilavg[which(imageseq==3)]
+  )
+
+boo2$onlineSL <- boo2$image1 - boo2$image23
+
+boo3 <- group_by(boo2, subID, timesseen) %>%
+  summarise(
+    onlineSL = mean(onlineSL, na.rm = TRUE)
+  )
+
+boo4 <- group_by(boo3, timesseen) %>%
+  summarise(
+    meanOnlineSL = mean(onlineSL, na.rm = TRUE),
+    seOnlineSL=sd(onlineSL, na.rm = TRUE)/sqrt(length(onlineSL))
+  )
+
+boo4$condition <- "triplet"
+
+goo <- rbind(poo4, boo4)
+
+#identify outliers
+goo <- rbind(poo4, boo4)
+ggplot(goo, aes(x=condition,y=meanOnlineSL,color=factor(condition)))+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  geom_boxplot()+
+  ggtitle("Anticipatory period (3)")+
+  labs(x = "Condition", y = "Online measure of SL")+
+  theme(plot.title = element_text(face="bold", size=16, hjust=0.5))+
+  theme(axis.title = element_text(face="bold", size=16))+ 
+  theme(axis.text.x  = element_text(size=16),axis.text.y  = element_text(size=16))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+
+  theme(legend.position="top")
+
+goo$meanOnlineSL[which(goo$meanOnlineSL==min(goo$meanOnlineSL[goo$condition=="random"]))] <- NA
+goo$meanOnlineSL[which(goo$meanOnlineSL==max(goo$meanOnlineSL[goo$condition=="triplet"]))] <- NA
+
+goo <- na.omit(goo)
+#Fig 3 from the paper = plot online measure of SL for each block
+ggplot(goo,aes(x=timesseen,y=meanOnlineSL,color=factor(condition),fill=factor(condition)))+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  geom_point(size = 5)+
+  ggtitle("Anticipatory period (3)")+
+  labs(x = "Number of times seen", y = "Online measure of SL")+
+  theme(plot.title = element_text(face="bold", size=16, hjust=0.5))+
+  theme(axis.title = element_text(face="bold", size=16))+ 
+  theme(axis.text.x  = element_text(size=16),axis.text.y  = element_text(size=16))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+
+  theme(legend.position="top")+
+  scale_x_continuous(limits=c(1,20),breaks=seq(1,20,1))+
+  scale_y_continuous(limits=c(-.1,.05),breaks=seq(-.1,.05,.01))+
+  geom_smooth(method="lm", se = FALSE)
+
+cor.test(goo$timesseen[goo$condition=="random"], goo$meanOnlineSL[goo$condition=="random"])
+cor.test(goo$timesseen[goo$condition=="triplet"], goo$meanOnlineSL[goo$condition=="triplet"])
+
+# compare slope 
+goo$condition <- as.factor(goo$condition)
+model1 <- lm(meanOnlineSL ~ timesseen*condition, data=goo)
+summary(model1)
+```
+
+O Mix: Compare online measure of SL between conditions (viewing period)
+2 and 3
+```{r}
+# Get data from random block
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX < 253] <- 1
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 252 & Omix.Rand$TRIAL_INDEX < 265] <- 2
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 264 & Omix.Rand$TRIAL_INDEX < 277] <- 3
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 276 & Omix.Rand$TRIAL_INDEX < 289] <- 4
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 288 & Omix.Rand$TRIAL_INDEX < 301] <- 5
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 300 & Omix.Rand$TRIAL_INDEX < 313] <- 6
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 312 & Omix.Rand$TRIAL_INDEX < 325] <- 7
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 324 & Omix.Rand$TRIAL_INDEX < 337] <- 8
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 336 & Omix.Rand$TRIAL_INDEX < 349] <- 9
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 348 & Omix.Rand$TRIAL_INDEX < 361] <- 10
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 360 & Omix.Rand$TRIAL_INDEX < 373] <- 11
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 372 & Omix.Rand$TRIAL_INDEX < 385] <- 12
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 384 & Omix.Rand$TRIAL_INDEX < 397] <- 13
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 396 & Omix.Rand$TRIAL_INDEX < 409] <- 14
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 408 & Omix.Rand$TRIAL_INDEX < 421] <- 15
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 420 & Omix.Rand$TRIAL_INDEX < 433] <- 16
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 432 & Omix.Rand$TRIAL_INDEX < 445] <- 17
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 444 & Omix.Rand$TRIAL_INDEX < 457] <- 18
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 456 & Omix.Rand$TRIAL_INDEX < 469] <- 19
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 468] <- 20
+
+#ANTICIPATORY PERIOD
+view4 <- subset(Omix.Rand, TIMECODE > 500)
+
+#online measure of SL = pupil change for 1st position - mean(pupil change for 2nd and 3rd position)
+poo <- group_by(view4, subID, TRIAL_INDEX, imageseq, timesseen) %>%
+  summarise(
+    pupilavg = mean(PUPIL_CORRECTED_2, na.rm = TRUE)
+  )
+
+poo$TRIAL_INDEX_2 <- poo$TRIAL_INDEX - 240
+
+# add in triplet trial index
+poo$triplet_trialindex <- 0
+
+subs <- unique(poo$subID)
+for (j in 1:length(subs)) {
+for (i in 1:80) {
+  if (length(which(poo$TRIAL_INDEX_2[poo$subID==subs[j]]==(i*3)-1)) > 0 & length(which(poo$TRIAL_INDEX_2[poo$subID==subs[j]]==(i*3)-2)) > 0 & length(which(poo$TRIAL_INDEX_2[poo$subID==subs[j]]==(i*3))) > 0) {
+    poo$triplet_trialindex[(poo$TRIAL_INDEX_2 ==(i*3)-2 | poo$TRIAL_INDEX_2 ==(i*3)-1 | poo$TRIAL_INDEX_2 ==(i*3)) & poo$subID==subs[j]] <- i
+    
+}}}
+
+poo <- subset(poo, triplet_trialindex !=0)
+
+# use both image 2 and 3
+poo2 <- group_by(poo, subID, triplet_trialindex, timesseen) %>%
+  summarise(
+    image1 = pupilavg[which(imageseq==1)],
+    image23 = mean(pupilavg[which(imageseq!=1)])
+  )
+
+poo2$onlineSL <- poo2$image1 - poo2$image23
+
+poo3 <- group_by(poo2, subID, timesseen) %>%
+  summarise(
+    onlineSL = mean(onlineSL, na.rm = TRUE)
+  )
+
+poo4 <- group_by(poo3, timesseen) %>%
+  summarise(
+    meanOnlineSL = mean(onlineSL, na.rm = TRUE),
+    seOnlineSL=sd(onlineSL, na.rm = TRUE)/sqrt(length(onlineSL))
+  )
+
+poo4$condition <- "random"
+
+#### GET DATA FROM TRIPLET BLOCK
+
+view3 <- subset(Omix.Trip, TIMECODE > 500)
+
+#online measure of SL = pupil change for 1st position - mean(pupil change for 2nd and 3rd position)
+boo <- group_by(view3, subID, TRIAL_INDEX, imageseq, timesseen) %>%
+  summarise(
+    pupilavg = mean(PUPIL_CORRECTED_2, na.rm = TRUE)
+  )
+
+# add in triplet trial index
+boo$triplet_trialindex <- 0
+
+subs <- unique(boo$subID)
+for (j in 1:length(subs)) {
+for (i in 1:80) {
+  if (length(which(boo$TRIAL_INDEX[boo$subID==subs[j]]==(i*3)-1)) > 0 & length(which(boo$TRIAL_INDEX[boo$subID==subs[j]]==(i*3)-2)) > 0 & length(which(boo$TRIAL_INDEX[boo$subID==subs[j]]==(i*3))) > 0) {
+    boo$triplet_trialindex[(boo$TRIAL_INDEX ==(i*3)-2 | boo$TRIAL_INDEX ==(i*3)-1 | boo$TRIAL_INDEX ==(i*3)) & boo$subID==subs[j]] <- i
+    
+}}}
+
+boo <- subset(boo, triplet_trialindex !=0)
+
+# use mean of both image 2 and 3
+boo2 <- group_by(boo, subID, triplet_trialindex, timesseen) %>%
+  summarise(
+    image1 = pupilavg[which(imageseq==1)],
+    image23 = mean(pupilavg[which(imageseq!=1)])
+  )
+
+boo2$onlineSL <- boo2$image1 - boo2$image23
+
+boo3 <- group_by(boo2, subID, timesseen) %>%
+  summarise(
+    onlineSL = mean(onlineSL, na.rm = TRUE)
+  )
+
+boo4 <- group_by(boo3, timesseen) %>%
+  summarise(
+    meanOnlineSL = mean(onlineSL, na.rm = TRUE),
+    seOnlineSL=sd(onlineSL, na.rm = TRUE)/sqrt(length(onlineSL))
+  )
+
+boo4$condition <- "triplet"
+
+goo <- rbind(poo4, boo4)
+  
+#identify outliers using IQR bc our data is not normally distributed
+ggplot(goo, aes(x=condition,y=meanOnlineSL,color=factor(condition)))+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  geom_boxplot()+
+  ggtitle("Viewing period (2+3)")+
+  labs(x = "Condition", y = "Online measure of SL")+
+  theme(plot.title = element_text(face="bold", size=16, hjust=0.5))+
+  theme(axis.title = element_text(face="bold", size=16))+ 
+  theme(axis.text.x  = element_text(size=16),axis.text.y  = element_text(size=16))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+
+  theme(legend.position="top")
+
+# Get the Min/Max values
+max <- quantile(goo$meanOnlineSL[goo$condition=="triplet"],0.75, na.rm=TRUE) + (IQR(goo$meanOnlineSL[goo$condition=="triplet"], na.rm=TRUE) * 1.5 )
+min <- quantile(goo$meanOnlineSL[goo$condition=="triplet"],0.25, na.rm=TRUE) - (IQR(goo$meanOnlineSL[goo$condition=="triplet"], na.rm=TRUE) * 1.5 )
+  
+# Get the id's using which
+idx <- which(goo$meanOnlineSL < min & goo$condition=="triplet" | goo$meanOnlineSL > max & goo$condition=="triplet")
+
+# Remove the outliers
+goo <- goo[-idx,]
+
+#Fig 3 from the paper = plot online measure of SL for each block
+ggplot(goo,aes(x=timesseen,y=meanOnlineSL,color=factor(condition),fill=factor(condition)))+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  geom_point(size = 5)+
+  ggtitle("Viewing period (2+3)")+
+  labs(x = "Number of times seen", y = "Online measure of SL")+
+  theme(plot.title = element_text(face="bold", size=16, hjust=0.5))+
+  theme(axis.title = element_text(face="bold", size=16))+ 
+  theme(axis.text.x  = element_text(size=16),axis.text.y  = element_text(size=16))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+
+  theme(legend.position="top")+
+  scale_x_continuous(limits=c(1,20),breaks=seq(1,20,1))+
+  scale_y_continuous(limits=c(-.05,.05),breaks=seq(-.05,.05,.01))+
+  geom_smooth(method="lm", se = FALSE)
+
+cor.test(goo$timesseen[goo$condition=="random"], goo$meanOnlineSL[goo$condition=="random"])
+cor.test(goo$timesseen[goo$condition=="triplet"], goo$meanOnlineSL[goo$condition=="triplet"])
+
+# compare slope 
+goo$condition <- as.factor(goo$condition)
+model1 <- lm(meanOnlineSL ~ timesseen*condition, data=goo)
+summary(model1)
+```
+
+O Mix: Compare online measure of SL between conditions (viewing period)
+2 
+```{r}
+# Get data from random block
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX < 253] <- 1
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 252 & Omix.Rand$TRIAL_INDEX < 265] <- 2
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 264 & Omix.Rand$TRIAL_INDEX < 277] <- 3
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 276 & Omix.Rand$TRIAL_INDEX < 289] <- 4
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 288 & Omix.Rand$TRIAL_INDEX < 301] <- 5
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 300 & Omix.Rand$TRIAL_INDEX < 313] <- 6
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 312 & Omix.Rand$TRIAL_INDEX < 325] <- 7
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 324 & Omix.Rand$TRIAL_INDEX < 337] <- 8
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 336 & Omix.Rand$TRIAL_INDEX < 349] <- 9
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 348 & Omix.Rand$TRIAL_INDEX < 361] <- 10
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 360 & Omix.Rand$TRIAL_INDEX < 373] <- 11
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 372 & Omix.Rand$TRIAL_INDEX < 385] <- 12
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 384 & Omix.Rand$TRIAL_INDEX < 397] <- 13
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 396 & Omix.Rand$TRIAL_INDEX < 409] <- 14
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 408 & Omix.Rand$TRIAL_INDEX < 421] <- 15
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 420 & Omix.Rand$TRIAL_INDEX < 433] <- 16
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 432 & Omix.Rand$TRIAL_INDEX < 445] <- 17
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 444 & Omix.Rand$TRIAL_INDEX < 457] <- 18
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 456 & Omix.Rand$TRIAL_INDEX < 469] <- 19
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 468] <- 20
+
+#ANTICIPATORY PERIOD
+view4 <- subset(Omix.Rand, TIMECODE > 500)
+
+#online measure of SL = pupil change for 1st position - mean(pupil change for 2nd and 3rd position)
+poo <- group_by(view4, subID, TRIAL_INDEX, imageseq, timesseen) %>%
+  summarise(
+    pupilavg = mean(PUPIL_CORRECTED_2, na.rm = TRUE)
+  )
+
+poo$TRIAL_INDEX_2 <- poo$TRIAL_INDEX - 240
+
+# add in triplet trial index
+poo$triplet_trialindex <- 0
+
+subs <- unique(poo$subID)
+for (j in 1:length(subs)) {
+for (i in 1:80) {
+  if (length(which(poo$TRIAL_INDEX_2[poo$subID==subs[j]]==(i*3)-1)) > 0 & length(which(poo$TRIAL_INDEX_2[poo$subID==subs[j]]==(i*3)-2)) > 0 & length(which(poo$TRIAL_INDEX_2[poo$subID==subs[j]]==(i*3))) > 0) {
+    poo$triplet_trialindex[(poo$TRIAL_INDEX_2 ==(i*3)-2 | poo$TRIAL_INDEX_2 ==(i*3)-1 | poo$TRIAL_INDEX_2 ==(i*3)) & poo$subID==subs[j]] <- i
+    
+}}}
+
+poo <- subset(poo, triplet_trialindex !=0)
+
+# just 2
+poo2 <- group_by(poo, subID, triplet_trialindex, timesseen) %>%
+  summarise(
+    image1 = pupilavg[which(imageseq==1)],
+    image23 = pupilavg[which(imageseq==2)]
+  )
+
+poo2$onlineSL <- poo2$image1 - poo2$image23
+
+poo3 <- group_by(poo2, subID, timesseen) %>%
+  summarise(
+    onlineSL = mean(onlineSL, na.rm = TRUE)
+  )
+
+poo4 <- group_by(poo3, timesseen) %>%
+  summarise(
+    meanOnlineSL = mean(onlineSL, na.rm = TRUE),
+    seOnlineSL=sd(onlineSL, na.rm = TRUE)/sqrt(length(onlineSL))
+  )
+
+poo4$condition <- "random"
+
+#### GET DATA FROM TRIPLET BLOCK
+
+view3 <- subset(Omix.Trip, TIMECODE > 500)
+
+#online measure of SL = pupil change for 1st position - mean(pupil change for 2nd and 3rd position)
+boo <- group_by(view3, subID, TRIAL_INDEX, imageseq, timesseen) %>%
+  summarise(
+    pupilavg = mean(PUPIL_CORRECTED_2, na.rm = TRUE)
+  )
+
+# add in triplet trial index
+boo$triplet_trialindex <- 0
+
+subs <- unique(boo$subID)
+for (j in 1:length(subs)) {
+for (i in 1:80) {
+  if (length(which(boo$TRIAL_INDEX[boo$subID==subs[j]]==(i*3)-1)) > 0 & length(which(boo$TRIAL_INDEX[boo$subID==subs[j]]==(i*3)-2)) > 0 & length(which(boo$TRIAL_INDEX[boo$subID==subs[j]]==(i*3))) > 0) {
+    boo$triplet_trialindex[(boo$TRIAL_INDEX ==(i*3)-2 | boo$TRIAL_INDEX ==(i*3)-1 | boo$TRIAL_INDEX ==(i*3)) & boo$subID==subs[j]] <- i
+    
+}}}
+
+boo <- subset(boo, triplet_trialindex !=0)
+
+# just 2
+boo2 <- group_by(boo, subID, triplet_trialindex, timesseen) %>%
+  summarise(
+    image1 = pupilavg[which(imageseq==1)],
+    image23 = pupilavg[which(imageseq==2)]
+  )
+
+boo2$onlineSL <- boo2$image1 - boo2$image23
+
+boo3 <- group_by(boo2, subID, timesseen) %>%
+  summarise(
+    onlineSL = mean(onlineSL, na.rm = TRUE)
+  )
+
+boo4 <- group_by(boo3, timesseen) %>%
+  summarise(
+    meanOnlineSL = mean(onlineSL, na.rm = TRUE),
+    seOnlineSL=sd(onlineSL, na.rm = TRUE)/sqrt(length(onlineSL))
+  )
+
+boo4$condition <- "triplet"
+
+goo <- rbind(poo4, boo4)
+
+#identify outliers
+goo <- rbind(poo4, boo4)
+ggplot(goo, aes(x=condition,y=meanOnlineSL,color=factor(condition)))+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  geom_boxplot()+
+  ggtitle("Viewing period (2)")+
+  labs(x = "Condition", y = "Online measure of SL")+
+  theme(plot.title = element_text(face="bold", size=16, hjust=0.5))+
+  theme(axis.title = element_text(face="bold", size=16))+ 
+  theme(axis.text.x  = element_text(size=16),axis.text.y  = element_text(size=16))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+
+  theme(legend.position="top")
+
+# Get the Min/Max values
+max <- quantile(goo$meanOnlineSL[goo$condition=="triplet"],0.75, na.rm=TRUE) + (IQR(goo$meanOnlineSL[goo$condition=="triplet"], na.rm=TRUE) * 1.5 )
+min <- quantile(goo$meanOnlineSL[goo$condition=="triplet"],0.25, na.rm=TRUE) - (IQR(goo$meanOnlineSL[goo$condition=="triplet"], na.rm=TRUE) * 1.5 )
+  
+# Get the id's using which
+idx <- which(goo$meanOnlineSL < min & goo$condition=="triplet" | goo$meanOnlineSL > max & goo$condition=="triplet")
+
+# Remove the outliers
+goo <- goo[-idx,]
+
+#Fig 3 from the paper = plot online measure of SL for each block
+ggplot(goo,aes(x=timesseen,y=meanOnlineSL,color=factor(condition),fill=factor(condition)))+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  geom_point(size = 5)+
+  ggtitle("Viewing period (2)")+
+  labs(x = "Number of times seen", y = "Online measure of SL")+
+  theme(plot.title = element_text(face="bold", size=16, hjust=0.5))+
+  theme(axis.title = element_text(face="bold", size=16))+ 
+  theme(axis.text.x  = element_text(size=16),axis.text.y  = element_text(size=16))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+
+  theme(legend.position="top")+
+  scale_x_continuous(limits=c(1,20),breaks=seq(1,20,1))+
+  scale_y_continuous(limits=c(-.05,.05),breaks=seq(-.05,.05,.01))+
+  geom_smooth(method="lm", se = FALSE)
+
+cor.test(goo$timesseen[goo$condition=="random"], goo$meanOnlineSL[goo$condition=="random"])
+cor.test(goo$timesseen[goo$condition=="triplet"], goo$meanOnlineSL[goo$condition=="triplet"])
+
+# compare slope 
+goo$condition <- as.factor(goo$condition)
+model1 <- lm(meanOnlineSL ~ timesseen*condition, data=goo)
+summary(model1)
+```
+
+
+O Mix: Compare online measure of SL between conditions (viewing period)
+3
+```{r}
+# Get data from random block
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX < 253] <- 1
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 252 & Omix.Rand$TRIAL_INDEX < 265] <- 2
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 264 & Omix.Rand$TRIAL_INDEX < 277] <- 3
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 276 & Omix.Rand$TRIAL_INDEX < 289] <- 4
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 288 & Omix.Rand$TRIAL_INDEX < 301] <- 5
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 300 & Omix.Rand$TRIAL_INDEX < 313] <- 6
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 312 & Omix.Rand$TRIAL_INDEX < 325] <- 7
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 324 & Omix.Rand$TRIAL_INDEX < 337] <- 8
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 336 & Omix.Rand$TRIAL_INDEX < 349] <- 9
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 348 & Omix.Rand$TRIAL_INDEX < 361] <- 10
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 360 & Omix.Rand$TRIAL_INDEX < 373] <- 11
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 372 & Omix.Rand$TRIAL_INDEX < 385] <- 12
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 384 & Omix.Rand$TRIAL_INDEX < 397] <- 13
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 396 & Omix.Rand$TRIAL_INDEX < 409] <- 14
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 408 & Omix.Rand$TRIAL_INDEX < 421] <- 15
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 420 & Omix.Rand$TRIAL_INDEX < 433] <- 16
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 432 & Omix.Rand$TRIAL_INDEX < 445] <- 17
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 444 & Omix.Rand$TRIAL_INDEX < 457] <- 18
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 456 & Omix.Rand$TRIAL_INDEX < 469] <- 19
+Omix.Rand$timesseen[Omix.Rand$TRIAL_INDEX > 468] <- 20
+
+#ANTICIPATORY PERIOD
+view4 <- subset(Omix.Rand, TIMECODE > 500)
+
+#online measure of SL = pupil change for 1st position - mean(pupil change for 2nd and 3rd position)
+poo <- group_by(view4, subID, TRIAL_INDEX, imageseq, timesseen) %>%
+  summarise(
+    pupilavg = mean(PUPIL_CORRECTED_2, na.rm = TRUE)
+  )
+
+poo$TRIAL_INDEX_2 <- poo$TRIAL_INDEX - 240
+
+# add in triplet trial index
+poo$triplet_trialindex <- 0
+
+subs <- unique(poo$subID)
+for (j in 1:length(subs)) {
+for (i in 1:80) {
+  if (length(which(poo$TRIAL_INDEX_2[poo$subID==subs[j]]==(i*3)-1)) > 0 & length(which(poo$TRIAL_INDEX_2[poo$subID==subs[j]]==(i*3)-2)) > 0 & length(which(poo$TRIAL_INDEX_2[poo$subID==subs[j]]==(i*3))) > 0) {
+    poo$triplet_trialindex[(poo$TRIAL_INDEX_2 ==(i*3)-2 | poo$TRIAL_INDEX_2 ==(i*3)-1 | poo$TRIAL_INDEX_2 ==(i*3)) & poo$subID==subs[j]] <- i
+    
+}}}
+
+poo <- subset(poo, triplet_trialindex !=0)
+
+# just 3
+poo2 <- group_by(poo, subID, triplet_trialindex, timesseen) %>%
+  summarise(
+    image1 = pupilavg[which(imageseq==1)],
+    image23 = pupilavg[which(imageseq==3)]
+  )
+
+poo2$onlineSL <- poo2$image1 - poo2$image23
+
+poo3 <- group_by(poo2, subID, timesseen) %>%
+  summarise(
+    onlineSL = mean(onlineSL, na.rm = TRUE)
+  )
+
+poo4 <- group_by(poo3, timesseen) %>%
+  summarise(
+    meanOnlineSL = mean(onlineSL, na.rm = TRUE),
+    seOnlineSL=sd(onlineSL, na.rm = TRUE)/sqrt(length(onlineSL))
+  )
+
+poo4$condition <- "random"
+
+#### GET DATA FROM TRIPLET BLOCK
+
+view3 <- subset(Omix.Trip, TIMECODE > 500)
+
+#online measure of SL = pupil change for 1st position - mean(pupil change for 2nd and 3rd position)
+boo <- group_by(view3, subID, TRIAL_INDEX, imageseq, timesseen) %>%
+  summarise(
+    pupilavg = mean(PUPIL_CORRECTED_2, na.rm = TRUE)
+  )
+
+# add in triplet trial index
+boo$triplet_trialindex <- 0
+
+subs <- unique(boo$subID)
+for (j in 1:length(subs)) {
+for (i in 1:80) {
+  if (length(which(boo$TRIAL_INDEX[boo$subID==subs[j]]==(i*3)-1)) > 0 & length(which(boo$TRIAL_INDEX[boo$subID==subs[j]]==(i*3)-2)) > 0 & length(which(boo$TRIAL_INDEX[boo$subID==subs[j]]==(i*3))) > 0) {
+    boo$triplet_trialindex[(boo$TRIAL_INDEX ==(i*3)-2 | boo$TRIAL_INDEX ==(i*3)-1 | boo$TRIAL_INDEX ==(i*3)) & boo$subID==subs[j]] <- i
+    
+}}}
+
+boo <- subset(boo, triplet_trialindex !=0)
+
+# just 3
+boo2 <- group_by(boo, subID, triplet_trialindex, timesseen) %>%
+  summarise(
+    image1 = pupilavg[which(imageseq==1)],
+    image23 = pupilavg[which(imageseq==3)]
+  )
+
+boo2$onlineSL <- boo2$image1 - boo2$image23
+
+boo3 <- group_by(boo2, subID, timesseen) %>%
+  summarise(
+    onlineSL = mean(onlineSL, na.rm = TRUE)
+  )
+
+boo4 <- group_by(boo3, timesseen) %>%
+  summarise(
+    meanOnlineSL = mean(onlineSL, na.rm = TRUE),
+    seOnlineSL=sd(onlineSL, na.rm = TRUE)/sqrt(length(onlineSL))
+  )
+
+boo4$condition <- "triplet"
+
+goo <- rbind(poo4, boo4)
+
+#identify outliers
+goo <- rbind(poo4, boo4)
+ggplot(goo, aes(x=condition,y=meanOnlineSL,color=factor(condition)))+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  geom_boxplot()+
+  ggtitle("Viewing period (3)")+
+  labs(x = "Condition", y = "Online measure of SL")+
+  theme(plot.title = element_text(face="bold", size=16, hjust=0.5))+
+  theme(axis.title = element_text(face="bold", size=16))+ 
+  theme(axis.text.x  = element_text(size=16),axis.text.y  = element_text(size=16))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+
+  theme(legend.position="top")
+
+# Get the Min/Max values
+max <- quantile(goo$meanOnlineSL[goo$condition=="triplet"],0.75, na.rm=TRUE) + (IQR(goo$meanOnlineSL[goo$condition=="triplet"], na.rm=TRUE) * 1.5 )
+min <- quantile(goo$meanOnlineSL[goo$condition=="triplet"],0.25, na.rm=TRUE) - (IQR(goo$meanOnlineSL[goo$condition=="triplet"], na.rm=TRUE) * 1.5 )
+  
+# Get the id's using which
+idx <- which(goo$meanOnlineSL < min & goo$condition=="triplet" | goo$meanOnlineSL > max & goo$condition=="triplet")
+
+# Remove the outliers
+goo <- goo[-idx,]
+
+#Fig 3 from the paper = plot online measure of SL for each block
+ggplot(goo,aes(x=timesseen,y=meanOnlineSL,color=factor(condition),fill=factor(condition)))+
+  theme_bw()+
+  theme(panel.grid.major = element_blank(),panel.grid.minor = element_blank(),axis.line = element_line(colour = "black"))+
+  geom_point(size = 5)+
+  ggtitle("Viewing period (3)")+
+  labs(x = "Number of times seen", y = "Online measure of SL")+
+  theme(plot.title = element_text(face="bold", size=16, hjust=0.5))+
+  theme(axis.title = element_text(face="bold", size=16))+ 
+  theme(axis.text.x  = element_text(size=16),axis.text.y  = element_text(size=16))+
+  theme(legend.text=element_text(size=16),legend.title=element_text(size=16))+
+  theme(legend.position="top")+
+  scale_x_continuous(limits=c(1,20),breaks=seq(1,20,1))+
+  scale_y_continuous(limits=c(-.05,.05),breaks=seq(-.05,.05,.01))+
+  geom_smooth(method="lm", se = FALSE)
+
+cor.test(goo$timesseen[goo$condition=="random"], goo$meanOnlineSL[goo$condition=="random"])
+cor.test(goo$timesseen[goo$condition=="triplet"], goo$meanOnlineSL[goo$condition=="triplet"])
+
+# compare slope 
+goo$condition <- as.factor(goo$condition)
+model1 <- lm(meanOnlineSL ~ timesseen*condition, data=goo)
+summary(model1)
+```
